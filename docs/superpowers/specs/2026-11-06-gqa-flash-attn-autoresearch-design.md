@@ -163,12 +163,25 @@ sm_120 if Triton exposes them, warp specialization, autotune caching per shape.
 
 ## Rules settled after builder review (Claude's calls; user may override)
 
-- **What an experiment is:** within one `claude -p` invocation the agent may
-  run the harness (and `ncu`/`nsys`) as often as it likes to iterate, like
-  Karpathy's agent running training. Every harness run is appended to a raw
-  `runs.log` so nothing is hidden. The *experiment* is the invocation; the
-  driver then does one official scored run that decides keep/revert. Each
-  invocation gets a timeout (~20 min, builder may tune).
+- **What an experiment is (user-confirmed): 1 experiment = 1 idea,
+  implemented and benchmarked once.** In one `claude -p` invocation the agent:
+  (1) reads results.tsv, notes and git log, and writes one hypothesis;
+  (2) implements it in the kernel file; (3) may run the **correctness-only**
+  check (no timing) to fix bugs in its implementation, with every run logged
+  to `runs.log`; (4) hands off. The **driver** then runs **one** official
+  benchmark, and that result alone decides keep/revert. The agent gets no timing
+  access during the experiment, so the experiment count is an honest count of
+  ideas tried. Profiling (`ncu`/`nsys`) is allowed only as a separate, logged
+  diagnostic step to inform the *next* idea, never to tune the current one.
+  Each invocation gets a timeout (~20 min, builder may tune).
+- **What the official benchmark covers (user-confirmed):** our kernel on the
+  full table (all 5 prefill + 6 decode lengths) plus correctness on those and
+  the held-out shapes. **FA2 and SDPA are timed once at loop start and cached**,
+  since their code never changes. Each experiment's vs-FA2 / vs-SDPA ratios use
+  the cached baselines. Safeguards: baselines are **re-timed periodically**
+  (every few hours, builder picks the interval) to catch GPU/thermal drift, and
+  the **README table comes from one fresh final run** timing all three kernels
+  side by side.
 - **Generality:** the kernel must be general, not fit to the 11 benchmark
   shapes. The locked harness also checks correctness on held-out shapes that
   aren't on the table (e.g. non-tile-multiple seq lengths like 3000 and 5001,
