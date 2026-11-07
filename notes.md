@@ -74,3 +74,8 @@ Q.K^T, m_i/l_i and acc stay fp32. Why: prefill_32768 runs at 223 TFLOPS, which i
 Passed check with margin: prefill max_row_rel ~0.0023 vs tol ~0.009, the same as before. fp16 P is finer than bf16 P. Caveat: fp16 V overflows if |v| > 65504.
 Next: if it wins, retune prefill tiles (lower reg/acc pressure may favour 128x128 or 2 blocks/SM), then try fp16-acc Q.K^T. That one is riskier: scores have a wider range, and q/k need a bf16->fp16 cast.
 If it is neutral or slower, Triton probably converted V before the smem stage (no cp.async pipelining). Try converting after the load instead, or keep bf16 V and change only P.
+
+Experiment 13: Q.K^T also uses FP16 accumulation in _attn_fwd (both loops). q is pre-scaled by scale*log2e in fp32 and cast to fp16 once; each K tile is cast to fp16 and
+qk = tl.dot(q16, k16, out_dtype=fp16).to(fp32) comes out in the log2 domain (the per-element scale multiply is gone). Now both prefill mmas run at the 419 TFLOPS fp16-acc rate (ceiling ~21 ms at 32k vs ~31.5 before).
+Passed check, but the margin is thinner: prefill max_row_rel 0.0039-0.0064 vs tol ~0.009-0.010 (was ~0.0023). It grows with seq length, so do NOT stack more precision cuts on prefill (no fp16 m/l or acc).
+Next: if it wins, retune prefill tiles (128x128 w8, 2-blocks/SM configs), since mma is no longer the limiter and softmax/exp2 issue rate is. If it loses, the fp16->fp32 cvt of the scores costs more than the mma saving: keep exp 12 only.

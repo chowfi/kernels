@@ -41,8 +41,11 @@ def _attn_fwd(
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
 
-    # exp2 softmax: log2(e) folded into the scale, m_i kept in the log2 domain
+    # exp2 softmax: log2(e) folded into the scale, m_i kept in the log2 domain.
+    # q is pre-scaled once and cast to fp16 so Q.K^T runs on the fp16-accumulate
+    # mma (2x rate) and comes out already in the log2 domain.
     qk_scale = scale * 1.4426950408889634
+    q = (q.to(tl.float32) * qk_scale).to(tl.float16)
 
     if CAUSAL:
         # causal requires SEQ_Q == SEQ_KV. KV blocks entirely below the diagonal
@@ -51,10 +54,10 @@ def _attn_fwd(
         for start_n in range(0, full_hi, BLOCK_N):
             cur_n = start_n + offs_n
             k = tl.load(k_base + cur_n[None, :] * sk_s + offs_d[:, None])
-            qk = tl.dot(q, k)
+            qk = tl.dot(q, k.to(tl.float16), out_dtype=tl.float16).to(tl.float32)
 
-            m_new = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
-            p = tl.math.exp2(qk * qk_scale - m_new[:, None])
+            m_new = tl.maximum(m_i, tl.max(qk, 1))
+            p = tl.math.exp2(qk - m_new[:, None])
             alpha = tl.math.exp2(m_i - m_new)
             l_i = l_i * alpha + tl.sum(p, 1)
 
@@ -73,7 +76,7 @@ def _attn_fwd(
         cur_n = start_n + offs_n
         k = tl.load(k_base + cur_n[None, :] * sk_s + offs_d[:, None],
                     mask=cur_n[None, :] < SEQ_KV, other=0.0)
-        s = tl.dot(q, k) * qk_scale
+        s = tl.dot(q, k.to(tl.float16), out_dtype=tl.float16).to(tl.float32)
         mask = cur_n[None, :] < SEQ_KV
         if CAUSAL:
             mask = mask & (offs_m[:, None] >= cur_n[None, :])
