@@ -19,3 +19,9 @@ Experiment 3: prefill tile sweep via triton.autotune on _attn_fwd (Sq > 16 only;
 prefill_8192 showed 255 regs/thread (spills), 57 KB smem -> 1 block/SM, 8.3% occupancy, 25.7% SM throughput.
 Passed check. Next: exp2 softmax (log2e in scale), reverse start_m order for causal tail, GQA packing in decode
 (decode_16384+ still < FA2), and re-profile prefill to see which config won and whether regs still spill.
+
+Experiment 4: GQA packing in the split-KV (decode) kernel. Each program now owns one KV head; packed row r ->
+(seq r//GROUP, head kvh*GROUP + r%GROUP), so K/V is streamed once per KV head instead of once per q-head (4x less
+traffic; decode_65536 KV = 268 MB, beyond L2). Split count recomputed from packed grid (8 base CTAs for decode ->
+~80 splits at 64k). Workspace/combine unchanged. Passed check incl. g1/g8 held-outs. Next: decode BLOCK_N/stages/warps
+sweep for the split kernel (BLOCK_N 128, num_stages 3-4), split-count target tuning, exp2 softmax, causal reverse order.

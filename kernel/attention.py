@@ -115,21 +115,27 @@ def _attn_fwd_split(
     H, SEQ_Q, SEQ_KV, GROUP, NUM_SPLITS, CHUNK, scale,
     HEAD_DIM: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
 ):
-    # Non-causal split-KV pass: each program handles one (m-block, head, split) and
-    # writes a normalized fp32 partial output plus its log-sum-exp.
+    # Non-causal split-KV pass with GQA packing: each program handles one
+    # (packed m-block, KV head, split). Packed row r covers query position
+    # r // GROUP and query head kvh*GROUP + r % GROUP, so the GROUP heads that
+    # share a KV head read each K/V tile once. Writes a normalized fp32 partial
+    # output plus its log-sum-exp.
     split = tl.program_id(0)
     pid_mh = tl.program_id(1)
     b = tl.program_id(2)
-    start_m = pid_mh // H
-    h = pid_mh % H
-    kvh = h // GROUP
+    HKV = H // GROUP
+    start_m = pid_mh // HKV
+    kvh = pid_mh % HKV
 
-    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_r = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_m = offs_r // GROUP
+    offs_h = kvh * GROUP + offs_r % GROUP
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, HEAD_DIM)
+    row_mask = offs_r < SEQ_Q * GROUP
 
-    q_ptrs = Q + b * sq_b + h * sq_h + offs_m[:, None] * sq_s + offs_d[None, :]
-    q = tl.load(q_ptrs, mask=offs_m[:, None] < SEQ_Q, other=0.0)
+    q_ptrs = Q + b * sq_b + offs_h[:, None] * sq_h + offs_m[:, None] * sq_s + offs_d[None, :]
+    q = tl.load(q_ptrs, mask=row_mask[:, None], other=0.0)
 
     k_base = K + b * sk_b + kvh * sk_h
     v_base = V + b * sv_b + kvh * sv_h
@@ -163,8 +169,7 @@ def _attn_fwd_split(
     lse = m_i + tl.log(l_i)
 
     # workspace layout: MID_O [B, H, SEQ_Q, NUM_SPLITS, D], MID_LSE [B, H, SEQ_Q, NUM_SPLITS]
-    row = (b * H + h) * SEQ_Q + offs_m
-    row_mask = offs_m < SEQ_Q
+    row = (b * H + offs_h) * SEQ_Q + offs_m
     o_ptrs = MID_O + (row[:, None] * NUM_SPLITS + split) * HEAD_DIM + offs_d[None, :]
     tl.store(o_ptrs, acc, mask=row_mask[:, None])
     tl.store(MID_LSE + row * NUM_SPLITS + split, lse, mask=row_mask)
@@ -216,7 +221,7 @@ def _attention_split(q, k, v, o, block_m, block_n, base_ctas, sm_count):
 
     mid_o = torch.empty((B, H, Sq, num_splits, D), device=q.device, dtype=torch.float32)
     mid_lse = torch.empty((B, H, Sq, num_splits), device=q.device, dtype=torch.float32)
-    grid = (num_splits, triton.cdiv(Sq, block_m) * H, B)
+    grid = (num_splits, triton.cdiv(Sq * (H // Hkv), block_m) * Hkv, B)
     _attn_fwd_split[grid](
         q, k, v, mid_o, mid_lse,
         q.stride(0), q.stride(1), q.stride(2),
@@ -250,11 +255,14 @@ def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool) -
     o = torch.empty_like(q)
     block_m = 16 if Sq <= 16 else 64
     block_n = 64
-    base_ctas = triton.cdiv(Sq, block_m) * H * B
     if not causal and Skv >= 4 * block_n:
+        # split path packs the GROUP q-heads sharing a KV head into M
+        rows = Sq * (H // Hkv)
+        pack_m = 16 if rows <= 16 else 64
+        base_ctas = triton.cdiv(rows, pack_m) * Hkv * B
         sm_count = _sm_count(q.device)
         if base_ctas < sm_count:
-            return _attention_split(q, k, v, o, block_m, block_n, base_ctas, sm_count)
+            return _attention_split(q, k, v, o, pack_m, block_n, base_ctas, sm_count)
     if Sq > 16:
         grid = lambda meta: (triton.cdiv(Sq, meta["BLOCK_M"]), H, B)  # noqa: E731
         _attn_fwd_tuned[grid](
