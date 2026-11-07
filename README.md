@@ -3,7 +3,7 @@
 A Triton forward-pass kernel for grouped-query attention (32 query heads, 8 KV heads, head_dim 128, bf16, batch 1),
 optimized on a single RTX 5090 by a Karpathy-style [autoresearch](https://github.com/karpathy/autoresearch) loop:
 headless Claude Code (`claude-opus-5-5`, effort `high`) proposes one idea per invocation, a driver measures it, and
-only verified improvements are kept. The loop runs for up to 12 active hours. Everything below the results table is
+only verified improvements are kept. The loop runs for up to 6 active hours. Everything below the results table is
 generated from the run's own logs.
 
 Workloads: prefill (causal, seq_q = seq_kv in 2048..32768) and decode (seq_q = 1, seq_kv in 2048..65536), 11 table

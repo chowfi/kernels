@@ -10,7 +10,7 @@ who can **use agents to optimize infrastructure**. The artifact demonstrates:
 
 1. A Karpathy-style autoresearch loop (https://github.com/karpathy/autoresearch),
    adapted from "train a small LLM" to "optimize a GPU kernel", that runs
-   autonomously for up to 12 hours.
+   autonomously for up to 6 active hours.
 2. The result of that loop: a Triton GQA flash-attention forward kernel tuned
    for the user's RTX 5090, benchmarked against FlashAttention-2 and PyTorch SDPA.
 3. Honest accounting: Claude tokens used, wall-clock time, number of experiments.
@@ -53,7 +53,7 @@ to FA2 (not necessarily beating it everywhere) with a clear story **is a win**.
 - **Triton**, GQA flash attention, **forward pass only**.
 - **No model weights.** Random tensors in real model shapes. No end-to-end LLM demo.
 - **Batch 1.**
-- **Budget: 12 hours** of autonomous loop time.
+- **Budget: 6 active hours** of autonomous loop time (reduced from 12 by the user on 2026-11-07 to fit subscription usage).
 - **Metrics to log:** Claude tokens used, wall-clock time to reach the goal,
   number of experiments. **No compute cost.**
 - **Deliverable:** public GitHub repo; the README is what the hiring manager reads.
@@ -111,11 +111,11 @@ Modeled on Karpathy's structure:
 A script that invokes Claude Code headlessly (`claude -p`, JSON output) **once
 per experiment**. My call, for two reasons: each invocation reports exact token
 usage (precise per-experiment accounting), and fresh context per experiment
-avoids context degradation over 12 hours. Cross-experiment memory lives in
+avoids context degradation over many hours. Cross-experiment memory lives in
 files (results.tsv, notes, git log).
 
 The driver records start/end wall-clock and active time (see below), sums tokens (input, output, cache
-read, cache write reported separately), and stops when **either** 12 hours of active time
+read, cache write reported separately), and stops when **either** 6 hours of active time
 elapse **or** every row in the table is ≥ 1.0× FA2. It writes a progress log the
 user can tail. The user starts it and walks away.
 
@@ -144,7 +144,7 @@ sm_120 if Triton exposes them, warp specialization, autotune caching per shape.
 - **Claude tokens:** from headless JSON usage per invocation, summed by the
   driver. Also include tokens from the setup/building session (this
   conversation and the implementation), reported separately from loop tokens.
-- **Wall-clock and active time:** loop start → goal reached or 12h active-time cap (pauses on usage limits excluded from active time); also report total
+- **Wall-clock and active time:** loop start → goal reached or 6h active-time cap (pauses on usage limits excluded from active time); also report total
   project time including setup.
 - **Experiments:** total / kept / reverted / failed correctness.
 
@@ -157,7 +157,7 @@ sm_120 if Triton exposes them, warp specialization, autotune caching per shape.
   periodically), and resumes without losing state.
 - **Report active time:** the driver tracks wall-clock and active time
   separately (active = wall-clock minus time paused on limits). The README
-  reports both. The **12-hour budget is measured in active time**, with a hard
+  reports both. The **6-hour budget is measured in active time**, with a hard
   wall-clock ceiling the builder picks (e.g. 36 h) so it can't run forever.
   (The active-time budget and the ceiling are Claude's calls.)
 

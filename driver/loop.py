@@ -1,7 +1,7 @@
 """Autoresearch main loop: one headless Claude invocation (= one idea) per experiment, then the
 official benchmark, then keep (commit) or revert, logging everything.
 
-    python -m driver.loop [--max-experiments N] [--active-hours 12] [--wall-hours 36]
+    python -m driver.loop [--max-experiments N] [--active-hours 6] [--wall-hours 36]
                           [--agent-timeout-min 20] [--agent-timeout-s S]
 
 Git model: history is linear. Every experiment ends in exactly one commit that holds its
@@ -637,7 +637,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--max-experiments", type=int, default=None,
                     help="stop after N experiments in this process (usage-limit retries and agent errors "
                          "before any work excluded)")
-    ap.add_argument("--active-hours", type=float, default=12.0)
+    ap.add_argument("--active-hours", type=float, default=6.0)
     ap.add_argument("--wall-hours", type=float, default=36.0)
     ap.add_argument("--agent-timeout-min", type=float, default=20.0)
     ap.add_argument("--agent-timeout-s", type=float, default=None, help="overrides --agent-timeout-min")

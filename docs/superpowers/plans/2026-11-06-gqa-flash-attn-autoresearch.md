@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Karpathy-style autoresearch loop in which headless Claude Code (Opus 5.5, high effort) iteratively optimizes a Triton GQA flash-attention forward kernel on the local RTX 5090 for up to 12 active hours, then publish a README results table vs FA2 and SDPA with token, time, and experiment accounting.
+**Goal:** Build a Karpathy-style autoresearch loop in which headless Claude Code (Opus 5.5, high effort) iteratively optimizes a Triton GQA flash-attention forward kernel on the local RTX 5090 for up to 6 active hours, then publish a README results table vs FA2 and SDPA with token, time, and experiment accounting.
 
 **Architecture:** A locked `harness/` package owns shapes, inputs, baselines, the fp32 reference, correctness, timing, and scoring. The agent may edit only `kernel/attention.py` (plus `notes.md` and `experiments/current.json`). A `driver/` package runs one `claude -p` invocation per experiment (one idea), then does the single official benchmark, keeps or reverts via git, appends `results.tsv`, and tracks tokens and active vs wall time through usage-limit pauses. `scripts/` produce the final fresh benchmark, README table, progress plot, and token report.
 
@@ -20,7 +20,7 @@
 - Our kernel's layout is FA2's: Q `[B, Sq, H, D]`, K/V `[B, Skv, Hkv, D]`, output `[B, Sq, H, D]`. SDPA receives `[B, H, S, D]`; conversion outside the timed region.
 - FA2: `flash_attn_func(causal=True)` for prefill, `flash_attn_with_kvcache` for decode. SDPA: `F.scaled_dot_product_attention(..., enable_gqa=True)` with default backend; record the chosen backend.
 - Loop model: `claude-opus-5-5`, effort `high`, every invocation.
-- Budget: 12 hours **active** time; hard wall-clock ceiling 36 hours. Stop early when every table row is ≥ 1.0× FA2.
+- Budget: 6 hours (user cut from 12 on 2026-11-07) **active** time; hard wall-clock ceiling 36 hours. Stop early when every table row is ≥ 1.0× FA2.
 - 1 experiment = 1 idea = 1 `claude -p` invocation (timeout 20 min) + 1 official driver benchmark. The agent has no timing access.
 - FA2/SDPA baselines timed at loop start, cached in `results/baselines.json`, re-timed every 3 hours; README table comes from one fresh final run of all three kernels.
 - Keep/revert score: geometric mean over the 11 table shapes of `fa2_ms / ours_ms`; any correctness failure on any shape (table or held-out) disqualifies.
@@ -390,7 +390,7 @@ startup:
   else: restore best, best_commit, threshold, next exp_id from run_state; revert_to(best_commit)
 loop:
   clock.heartbeat()
-  stop if active >= 12h, wall >= 36h, max-experiments reached,
+  stop if active >= 6h, wall >= 36h, max-experiments reached,
        or min_vs_fa2(best) >= 1.0
   if harness_hash changed: abort loudly (human tampering or bug)
   if now - baselines.timestamp >= 3h: re-bench baselines (log drift % per shape to progress.log)
@@ -509,7 +509,7 @@ def test_token_split(tmp_path):
   - next steps: FP8 K/V, TMA on sm_120 if Triton exposes it, warp specialization, per-shape autotune caching
 - [ ] **Step 6:** Commit with message `feat: reporting scripts and README skeleton`.
 
-### Task 11: The 12-hour run, final report, publish
+### Task 11: The 6-hour run, final report, publish
 
 **Files:**
 - Modify: `README.md`, `results.tsv`, `results/*`
