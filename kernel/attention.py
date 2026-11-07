@@ -188,8 +188,10 @@ def _attn_fwd_split(
     for start_n in range(lo, hi, BLOCK_N):
         cur_n = start_n + offs_n
         kv_mask = cur_n < hi
+        # K/V are streamed exactly once: evict-first keeps them from displacing
+        # (and forcing writeback of) other L2-resident lines.
         k = tl.load(k_base + cur_n[None, :] * sk_s + offs_d[:, None],
-                    mask=kv_mask[None, :], other=0.0)
+                    mask=kv_mask[None, :], other=0.0, eviction_policy="evict_first")
         s = tl.dot(q, k) * qk_scale
         s = tl.where(kv_mask[None, :], s, float("-inf"))
 
@@ -200,7 +202,7 @@ def _attn_fwd_split(
         acc = acc * alpha[:, None]
 
         v = tl.load(v_base + cur_n[:, None] * sv_s + offs_d[None, :],
-                    mask=kv_mask[:, None], other=0.0)
+                    mask=kv_mask[:, None], other=0.0, eviction_policy="evict_first")
         acc += tl.dot(p.to(tl.bfloat16), v)
         m_i = m_new
 
@@ -268,7 +270,9 @@ def _attention_split(q, k, v, o, block_m, block_n, base_ctas, sm_count):
         v.stride(0), v.stride(1), v.stride(2),
         H, Sq, Skv, H // Hkv, num_splits, chunk, 1.0 / math.sqrt(D),
         HEAD_DIM=D, BLOCK_M=block_m, BLOCK_N=block_n,
-        num_warps=4, num_stages=2,
+        # num_stages=1: plain ld.global keeps the L2 evict_first policy (the
+        # cp.async path of the pipeliner drops it).
+        num_warps=4, num_stages=1,
     )
     _attn_combine[(Sq, H, B)](
         mid_o, mid_lse, o,
