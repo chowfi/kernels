@@ -1,4 +1,5 @@
 """Agent-facing correctness CLI. Prints NO timing. Appends a block to runs.log."""
+import contextlib
 import importlib
 import os
 import sys
@@ -26,6 +27,27 @@ def format_result(r) -> str:
     return s
 
 
+@contextlib.contextmanager
+def silenced():
+    """Point fds 1 and 2 at /dev/null (M1): nothing the kernel prints while being imported or run,
+    from Python or native code, reaches the agent. The harness prints its own lines afterwards."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved = [os.dup(1), os.dup(2)]
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(saved[0], 1)
+        os.dup2(saved[1], 2)
+        for fd in (*saved, devnull):
+            os.close(fd)
+
+
 def load_kernel():
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
@@ -49,7 +71,8 @@ def main() -> int:
         return bool(bad)
 
     try:
-        kernel = load_kernel()
+        with silenced():
+            kernel = load_kernel()
     except Exception as e:  # noqa: BLE001 - import failure is a gate failure
         line = f"IMPORT FAIL error={e!r}"
         print(line)
@@ -57,7 +80,8 @@ def main() -> int:
         return 1
     if integrity_fail("after kernel import"):
         return 1
-    results = check_kernel(kernel, BENCH_SHAPES + HELDOUT_SHAPES)
+    with silenced():
+        results = check_kernel(kernel, BENCH_SHAPES + HELDOUT_SHAPES)
     if integrity_fail("after correctness"):
         return 1
     lines = [format_result(r) for r in results]

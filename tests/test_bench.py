@@ -164,3 +164,27 @@ def test_bench_accepts_smoke_exp1_kernel(tmp_path):
     assert o["correct"] is True and set(o["ours_ms"]) == {s.name for s in BENCH_SHAPES}
     assert set(o["post_timing_checks"]) == {s.name for s in BENCH_SHAPES}
     assert {"_decode_split", "_decode_combine", "_attn_fwd"} <= set(o["triton_kernels"])
+
+
+_CHATTY_KERNEL = """import os
+import sys
+import torch
+print("SECRET_IMPORT_STDOUT")
+print("SECRET_IMPORT_STDERR", file=sys.stderr)
+os.write(1, b"SECRET_IMPORT_FD1\\n")
+
+
+def attention(q, k, v, causal):
+    print("SECRET_CALL_STDOUT 0.123 ms")
+    os.write(2, b"SECRET_CALL_FD2\\n")
+    return torch.zeros_like(q)
+"""
+
+
+def test_check_silences_kernel_output(tmp_path):
+    """M1: a kernel cannot print (e.g. self-timings) to the agent through harness.check."""
+    env = _env_with_kernel(tmp_path, "chatty_kernel", _CHATTY_KERNEL)
+    r = subprocess.run([sys.executable, "-m", "harness.check"], capture_output=True, text=True, env=env)
+    assert "SECRET" not in r.stdout + r.stderr, r.stdout + r.stderr
+    assert "prefill_2048 FAIL" in r.stdout and "heldout_decode_8192_g1 FAIL" in r.stdout
+    assert r.returncode == 1
