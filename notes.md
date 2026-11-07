@@ -43,3 +43,9 @@ Experiment 7: decode split-kernel config sweep. _attn_fwd_split wrapped in trito
 Motivation: HEAD decode_32768 profile = 74% DRAM peak, L2 hit 0.7%, 2 blocks/SM (38.9 KB smem), 1.74 waves; config never tuned.
 Chunk sizing stays 64-aligned (kv_mask covers BLOCK_N=128). Passed check. Next: combine kernel (150 regs, 32 CTAs, one row
 each; could pack/parallelize over D), split-count target sized to whole waves of resident CTAs, unmasked full-block loop in split.
+
+Experiment 8: wave-exact, block-balanced split-KV for decode. num_splits = min(2*SMs // base_ctas, kv_blocks // 2) (2 = smem-limited
+blocks/SM of _attn_fwd_split, constant _SPLIT_BLOCKS_PER_SM) so the split grid is one full wave (336 CTAs vs 592 = 1.74 waves at 32k);
+split s covers KV blocks [s*NB//S, (s+1)*NB//S) so the count is exact and splits differ by <= 1 block (CHUNK arg replaced by NUM_KV_BLOCKS).
+Motivation: decode_32768 profile 74% DRAM peak with a partial trailing wave. Passed check. If neutral, the tail is not the limiter: next try
+more bytes in flight per SM (3 blocks/SM via BLOCK_N 32 s3 + 1 wave sizing), unmasked inner loop in split, or a cheaper combine (150 regs).
