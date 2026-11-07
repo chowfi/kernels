@@ -72,6 +72,7 @@ def count_experiments(rows: list[dict]) -> dict:
     n = lambda *st: sum(r["status"] in st for r in exps)  # noqa: E731
     scored = [r for r in rows if r["status"] != "usage_limit" and r["best_score"]]
     last_kept = next((r for r in reversed(rows) if r["status"] == "kept"), None)
+    goal = next((r for r in rows if r["status"] == "kept" and (_num(r.get("min_vs_fa2")) or 0) >= 1.0), None)
     return {"total": len(exps), "kept": n("kept"), "reverted": n("reverted"),
             "failed_correctness": n("failed_correctness"),
             "other": n("crashed", "violation", "timeout", "agent_error"),
@@ -81,7 +82,10 @@ def count_experiments(rows: list[dict]) -> dict:
             "seed_score": float(seed["score"]) if seed and seed["score"] else None,
             "best_score": float(scored[-1]["best_score"]) if scored else None,
             "best_active_s": _num(last_kept.get("active_s")) if last_kept else None,
-            "best_wall_s": _num(last_kept.get("wall_s")) if last_kept else None}
+            "best_wall_s": _num(last_kept.get("wall_s")) if last_kept else None,
+            "goal_exp": goal["exp_id"] if goal else None,
+            "goal_active_s": _num(goal.get("active_s")) if goal else None,
+            "goal_wall_s": _num(goal.get("wall_s")) if goal else None}
 
 
 def _f3(x) -> str:
@@ -118,6 +122,10 @@ def render_accounting(counts: dict, loop: Usage, build: dict | None, active_s: f
     best_t = ("n/a" if counts.get("best_active_s") is None or counts.get("best_wall_s") is None
               else f"{fmt_dur(counts['best_active_s'])} active, {fmt_dur(counts['best_wall_s'])} wall "
                    f"(at the last kept experiment)")
+    goal_t = ("not reached" if counts.get("goal_exp") is None or counts.get("goal_active_s") is None
+              else f"exp {counts['goal_exp']}, {fmt_dur(counts['goal_active_s'])} active, "
+                   f"{fmt_dur(counts['goal_wall_s'])} wall (first kept experiment with every row >= 1.0x "
+                   f"the cached FA2 baselines)")
     tokens = (f"- Loop tokens (agent invocations, exact per-session totals from Claude result events): "
               f"{_tok(loop)}.")
     if counts.get("timeouts"):
@@ -129,6 +137,7 @@ def render_accounting(counts: dict, loop: Usage, build: dict | None, active_s: f
          f"The seed (exp 0), usage-limit pauses and {counts.get('idle_agent_errors', 0)} agent error(s) before any "
          f"work (no hypothesis, zero output tokens; retried) are not counted as experiments.",
          f"- Score (geomean FA2 ms / ours ms): seed {_f3(counts['seed_score'])}, final best {_f3(counts['best_score'])}",
+         f"- Time to beat FA2 on every row: {goal_t}",
          f"- Time to reach the best kernel: {best_t}",
          f"- Active time: {fmt_dur(active_s)}; wall time: {fmt_dur(wall_s)}; "
          f"{counts['usage_limit_pauses']} usage-limit pause(s), {fmt_dur(paused_s)} paused in total",

@@ -1,7 +1,7 @@
 """Autoresearch main loop: one headless Claude invocation (= one idea) per experiment, then the
 official benchmark, then keep (commit) or revert, logging everything.
 
-    python -m driver.loop [--max-experiments N] [--active-hours 6] [--wall-hours 36]
+    python -m driver.loop [--max-experiments N] [--active-hours 6] [--wall-hours 36] [--no-goal-stop]
                           [--agent-timeout-min 20] [--agent-timeout-s S]
 
 Git model: history is linear. Every experiment ends in exactly one commit that holds its
@@ -449,7 +449,7 @@ class Loop:
             return "wall_hours"
         if a.max_experiments is not None and self.experiments_this_run >= a.max_experiments:
             return "max_experiments"
-        if min_ratio(self.st["best_ours_ms"], self.fa2()) >= 1.0:
+        if not a.no_goal_stop and min_ratio(self.st["best_ours_ms"], self.fa2()) >= 1.0:
             return "beat_fa2_everywhere"
         return None
 
@@ -652,6 +652,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
                          "before any work excluded)")
     ap.add_argument("--active-hours", type=float, default=6.0)
     ap.add_argument("--wall-hours", type=float, default=36.0)
+    ap.add_argument("--no-goal-stop", action="store_true",
+                    help="keep running after every row is >= 1.0x FA2 (until the active/wall cap)")
     ap.add_argument("--agent-timeout-min", type=float, default=20.0)
     ap.add_argument("--agent-timeout-s", type=float, default=None, help="overrides --agent-timeout-min")
     return ap.parse_args(argv)

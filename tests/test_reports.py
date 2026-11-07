@@ -53,7 +53,8 @@ def test_experiment_counting_excludes_baseline_and_usage_limit():
     assert c == {"total": 8, "kept": 2, "reverted": 2, "failed_correctness": 1, "other": 3,
                  "timeouts": 1, "usage_limit_pauses": 1, "idle_agent_errors": 1,
                  "seed_score": 0.27, "best_score": 0.90,
-                 "best_active_s": 3600.0, "best_wall_s": 7200.0}
+                 "best_active_s": 3600.0, "best_wall_s": 7200.0,
+                 "goal_exp": None, "goal_active_s": None, "goal_wall_s": None}
 
 
 def test_update_readme_between_markers(tmp_path):
@@ -100,12 +101,14 @@ def test_accounting_block():
     from driver.ledger import Usage
     counts = {"total": 7, "kept": 2, "reverted": 2, "failed_correctness": 1, "other": 2, "timeouts": 1,
               "usage_limit_pauses": 1, "idle_agent_errors": 2, "seed_score": 0.27, "best_score": 0.9,
-              "best_active_s": 3600.0, "best_wall_s": 7260.0}
+              "best_active_s": 3600.0, "best_wall_s": 7260.0,
+              "goal_exp": "5", "goal_active_s": 660.0, "goal_wall_s": 700.0}
     s = render_accounting(counts=counts, loop=Usage(1, 2, 3, 4), build=None, active_s=3600, wall_s=7200,
                           paused_s=3600, stop_reason="budget")
     assert "7 total" in s and "stop reason" in s.lower() and "lower bound" in s
     assert "2 agent error(s) before any work" in s
     assert "Time to reach the best kernel: 1h 00m active, 2h 01m wall" in s
+    assert "Time to beat FA2 on every row: exp 5, 0h 11m active, 0h 12m wall" in s
 
 
 def test_accounting_omits_timeout_sentence_without_timeouts():
@@ -117,6 +120,7 @@ def test_accounting_omits_timeout_sentence_without_timeouts():
                           paused_s=0, stop_reason="budget")
     assert "lower bound" not in s and "timeout" not in s.lower().replace("crash/violation/timeout", "")
     assert "Time to reach the best kernel: n/a" in s
+    assert "Time to beat FA2 on every row: not reached" in s
 
 
 def test_plot_progress(tmp_path):
@@ -153,3 +157,17 @@ def test_final_report_bench_crash_does_not_publish_stale(tmp_path):
                         "--bench-cmd", "false", "--readme", str(readme)],
                        capture_output=True, text=True, cwd=Path(__file__).parent.parent)
     assert r.returncode != 0 and readme.read_text() == orig and not stale.exists()
+
+
+def test_goal_row_is_first_kept_with_all_rows_at_fa2():
+    rows = [{"exp_id": "0", "status": "baseline", "score": "0.3", "best_score": "0.3", "min_vs_fa2": "0.1"},
+            {"exp_id": "1", "status": "reverted", "score": "1.2", "best_score": "0.3", "min_vs_fa2": "1.1",
+             "active_s": "10", "wall_s": "10"},
+            {"exp_id": "2", "status": "kept", "score": "0.9", "best_score": "0.9", "min_vs_fa2": "0.95",
+             "active_s": "20", "wall_s": "20"},
+            {"exp_id": "3", "status": "kept", "score": "1.1", "best_score": "1.1", "min_vs_fa2": "1.01",
+             "active_s": "30", "wall_s": "31", "hypothesis": "x", "output_tokens": "5"},
+            {"exp_id": "4", "status": "kept", "score": "1.2", "best_score": "1.2", "min_vs_fa2": "1.05",
+             "active_s": "40", "wall_s": "41", "hypothesis": "y", "output_tokens": "5"}]
+    c = count_experiments(rows)
+    assert (c["goal_exp"], c["goal_active_s"], c["goal_wall_s"]) == ("3", 30.0, 31.0)

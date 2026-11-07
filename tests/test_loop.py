@@ -654,3 +654,11 @@ def test_is_stray_matches_tokens_not_substrings():
     assert not _is_stray("python my_ncurses_app.py")
     assert not _is_stray("python uncut.py")
     assert not _is_stray("python -m other.harness.check_tool")
+
+
+def test_no_goal_stop_resumes_past_goal(loop_env):
+    run(loop_env, "improve", bench_scores=[1.2, 1.2], max_exp=5)
+    assert state()["stop_reason"] == "beat_fa2_everywhere"
+    run(loop_env, "improve", bench_scores=[1.4, 1.4], max_exp=1, extra=["--no-goal-stop"])
+    assert exp_ids() == [0, 1, 2]
+    assert state()["stop_reason"] == "max_experiments"

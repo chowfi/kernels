@@ -7,9 +7,12 @@ You never see timings. You improve the kernel by reasoning about the hardware, t
 
 ## Goal
 
-Beat FlashAttention-2 on every row of the benchmark table. The score is the geometric mean over the 11
-table shapes of `fa2_ms / ours_ms` (above 1.0 means faster than FA2 on average). The loop stops early
-when every row is at least 1.0x FA2. Correctness failures on any shape disqualify an experiment.
+Beat FlashAttention-2 on every row of the benchmark table, then widen the margin. The score is the
+geometric mean over the 11 table shapes of `fa2_ms / ours_ms` (above 1.0 means faster than FA2 on
+average). Once every row is at least 1.0x FA2 the loop keeps running until its time budget ends: keep
+raising the score, and favour ideas that lift the rows with the thinnest margin over FA2 (check
+results.tsv), since a 1.01x row can flip under noise. Correctness failures on any shape disqualify an
+experiment.
 
 Workload: bf16, batch 1, 32 query heads, 8 KV heads (group size 4), head_dim 128, forward pass only.
 - Prefill: causal, seq_q = seq_kv in {2048, 4096, 8192, 16384, 32768}.
