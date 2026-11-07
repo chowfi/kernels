@@ -36,6 +36,7 @@ METRICS = [
     ("block size (threads)", "launch__block_size"),
     ("waves per SM", "launch__waves_per_multiprocessor"),
 ]
+_TIME_RE = re.compile(r"\d\s*(ms|us|ns|usecond|msecond|nsecond|s)\b", re.I)
 _TIME_UNIT = re.compile(r"^(n|u|m|µ)?s(econd)?$|^(n|u|m)?second$", re.I)
 
 
@@ -98,35 +99,53 @@ def _target(shape_name: str, module_path: str) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(allow_abbrev=False)
     ap.add_argument("--shape", required=True)
     ap.add_argument("--_target", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--module-path", help=argparse.SUPPRESS)
+    ap.add_argument("--_module", help=argparse.SUPPRESS)
     a = ap.parse_args()
 
     shapes = _all_shapes()
     if a.shape not in shapes:
-        print(f"unknown shape {a.shape!r}; valid names: {', '.join(shapes)}", file=sys.stderr)
-        print(f"valid shapes: {', '.join(shapes)}")
+        print(f"unknown shape {a.shape!r}; valid names: {', '.join(shapes)}")
         return 2
     if a._target:
-        return _target(a.shape, a.module_path)
+        # Internal: only the parent process (which sets this env var) may run the target helper,
+        # and it must never load a module from the working-tree kernel/ dir.
+        if os.environ.get("HARNESS_PROFILE_TARGET") != "1" or not a._module:
+            print("--_target is internal", file=sys.stderr)
+            return 2
+        mp = Path(a._module).resolve()
+        if (ROOT / "kernel") in mp.parents:
+            print("refusing to profile working-tree kernel", file=sys.stderr)
+            return 2
+        return _target(a.shape, str(mp))
 
     from harness.check import append_runs_log
 
-    sha = _head_sha()
+    try:
+        sha = _head_sha()
+        head_src = None
+        test_mod = os.environ.get("HARNESS_PROFILE_TEST_MODULE")  # test hook (env only)
+        if not test_mod:
+            head_src = subprocess.check_output(["git", "show", "HEAD:kernel/attention.py"], cwd=ROOT,
+                                               text=True, stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("cannot read HEAD:kernel/attention.py (no committed kernel?)")
+        return 1
     header = f"Profile of HEAD kernel ({sha}) on {a.shape}"
     with tempfile.TemporaryDirectory() as tmp:
         mod_path = Path(tmp) / "head_attention.py"
-        if a.module_path:  # test hook only; default is git HEAD
-            shutil.copy(a.module_path, mod_path)
+        if test_mod:
+            shutil.copy(test_mod, mod_path)
         else:
-            mod_path.write_text(subprocess.check_output(["git", "show", "HEAD:kernel/attention.py"], cwd=ROOT, text=True))
+            mod_path.write_text(head_src)
         cmd = [NCU, "--set", "full", "--nvtx", "--nvtx-include", f"{NVTX_RANGE}/",
                "--csv", "--page", "raw", sys.executable, "-m", "harness.profile",
-               "--_target", "--shape", a.shape, "--module-path", str(mod_path)]
+               "--_target", "--shape", a.shape, "--_module", str(mod_path)]
         try:
-            r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=600)
+            r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=600,
+                               env={**os.environ, "HARNESS_PROFILE_TARGET": "1"})
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             lines = [header, f"profiling unavailable ({type(e).__name__})"]
             r = None
@@ -136,7 +155,7 @@ def main() -> int:
         if "ERR_NVGPUCTRPERM" in blob:
             lines = [header, "profiling unavailable (ERR_NVGPUCTRPERM: GPU counters need admin enablement)"]
         elif not metrics:
-            lines = [header, "profiling failed: no metrics captured"] + [l for l in r.stderr.splitlines()[-5:]]
+            lines = [header, "profiling failed: no metrics captured"] + [l for l in r.stderr.splitlines()[-5:] if not _TIME_RE.search(l)]
             print("\n".join(lines))
             append_runs_log(f"harness.profile --shape {a.shape}", lines)
             return 1

@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import sys
@@ -5,8 +6,8 @@ import sys
 import pytest
 
 
-def _run(*args, tmp_path):
-    env = {**__import__("os").environ, "HARNESS_RUNS_LOG": str(tmp_path / "runs.log")}
+def _run(*args, tmp_path, extra_env=None):
+    env = {**os.environ, "HARNESS_RUNS_LOG": str(tmp_path / "runs.log"), **(extra_env or {})}
     return subprocess.run([sys.executable, "-m", "harness.profile", *args],
                           capture_output=True, text=True, env=env)
 
@@ -56,7 +57,22 @@ def attention(q, k, v, causal):
 def test_profile_covers_all_kernels_any_name(tmp_path):
     mod = tmp_path / "fake_attn.py"
     mod.write_text(_TWO_KERNELS)
-    out = _run("--shape", "decode_2048", "--module-path", str(mod), tmp_path=tmp_path)
+    out = _run("--shape", "decode_2048", tmp_path=tmp_path, extra_env={"HARNESS_PROFILE_TEST_MODULE": str(mod)})
     assert out.returncode == 0, out.stderr
     assert "weird_first_k" in out.stdout and "weird_second_k" in out.stdout
     assert not re.search(r"\d\s*(ms|us|ns)\b", out.stdout)
+
+
+def test_module_path_flag_rejected(tmp_path):
+    out = _run("--shape", "decode_2048", "--module-path", "kernel/attention.py", tmp_path=tmp_path)
+    assert out.returncode == 2 and "unrecognized" in out.stderr
+
+
+def test_target_helper_not_publicly_runnable(tmp_path):
+    out = _run("--_target", "--shape", "decode_2048", "--_module", "/tmp/x.py", tmp_path=tmp_path)
+    assert out.returncode == 2
+
+
+def test_profiling_unavailable(tmp_path):
+    out = _run("--shape", "decode_2048", tmp_path=tmp_path, extra_env={"NCU_PATH": "/nonexistent/ncu"})
+    assert out.returncode == 0 and "profiling unavailable" in out.stdout
