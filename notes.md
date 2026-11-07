@@ -62,3 +62,9 @@ NUM_KV_BLOCKS arg) with num_splits = min(2*SMs // base_ctas, NB): the floor is 1
 (256 single-tile CTAs, not 128 two-tile ones) and decode_4096 gets 42 (336 CTAs, not 256). Exp 8 won the first run (1.1581) and missed the
 confirmation (1.1538 vs 1.1559). The idea is to keep its 16k-64k gain and add a lift on short decodes. Passed check. Next: decode grid with kvh
 fastest (whole 2 KB token rows streamed together for DRAM locality), a 3-blocks/SM split config with 1-wave sizing, then the prefill_2048 tail/prologue.
+
+Experiment 11: KV-head-fastest launch order for _attn_fwd_split. Grid changed from (splits, m*Hkv, B) to (m*Hkv, splits, B), so the 8 KV-head CTAs for a
+token range are adjacent. Their 256 B slices of each 2 KB [Hkv, D] token row are then requested together. Before, the ~340-CTA first wave covered heads 0-4 for every
+token and heads 5-7 came a wave later. Only the order changed, nothing else. Targets decode_32768/65536 (thinnest rows, DRAM-bound, 74% of peak). Passed check.
+Next: if this helps, add exp 8's one-wave sizing on top (min(2*SMs//base, NB//2), and keep the 2-block floor so decode_2048 does not regress as it did in exp 10).
+If it is neutral, DRAM order is not the limiter: try an unmasked inner loop in the split kernel, or 3 blocks/SM.
