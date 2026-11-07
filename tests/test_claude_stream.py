@@ -4,7 +4,7 @@ import stat
 import sys
 from pathlib import Path
 
-from driver.claude_stream import AGENT_TOOLS, parse_stream, run_claude
+from driver.claude_stream import AGENT_TOOLS, DISALLOWED_TOOLS, _parse_reset, parse_stream, run_claude
 from driver.ledger import TokenLedger, Usage
 
 FIX = Path(__file__).parent / "fixtures"
@@ -52,8 +52,16 @@ def test_agent_tools_scoped():
     assert AGENT_TOOLS == [
         "Read", "Glob", "Grep", "Edit(kernel/attention.py)", "Write(kernel/attention.py)",
         "Edit(notes.md)", "Write(experiments/current.json)", "Edit(experiments/current.json)",
-        "Bash(uv run python -m harness.check:*)", "Bash(uv run python -m harness.profile:*)",
+        "Bash(uv run --frozen python -m harness.check:*)",
+        "Bash(uv run --frozen python -m harness.profile:*)",
         "Bash(git log:*)", "Bash(git diff:*)", "Bash(git show:*)"]
+
+
+def test_agent_git_output_flags_denied():
+    """M2: git log/diff/show could write files with --output=<file>; deny rules block it
+    (verified with a real `claude -p --permission-mode dontAsk` scratch run, see final-fix-report)."""
+    assert DISALLOWED_TOOLS == ["Bash(git log --output*)", "Bash(git diff --output*)",
+                                "Bash(git show --output*)", "Bash(git * --output*)"]
 
 
 def test_429_status_without_is_error():
@@ -92,6 +100,8 @@ def test_command_line(tmp_path):
     assert val("--permission-mode") == "dontAsk"
     i = argv.index("--allowedTools")
     assert argv[i + 1:] == AGENT_TOOLS
+    j = argv.index("--disallowedTools")
+    assert argv[j + 1:i] == DISALLOWED_TOOLS
 
 
 def _fake(tmp_path, body):
@@ -169,3 +179,90 @@ def test_run_claude_kills_child_on_keyboard_interrupt(tmp_path):
     time.sleep(0.2)
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+# ---------------------------------------------------------------- I2 / I3 / M6 / M7
+
+def _rle(status, resets_at=1794025200, five=0.3, seven=0.11):
+    return json.dumps({"type": "rate_limit_event", "rate_limit_info": {
+        "status": status, "resetsAt": resets_at, "rateLimitType": "five_hour",
+        "unifiedWindows": {"five_hour": {"utilization": five, "resetsAt": resets_at, "status": status},
+                           "seven_day": {"utilization": seven, "resetsAt": 1794243600,
+                                         "status": "allowed"}}}})
+
+
+def _res(text, is_error=True, **kw):
+    return json.dumps({"type": "result", "is_error": is_error, "result": text, **kw})
+
+
+def test_rate_limit_event_rejected_is_usage_limit():
+    o = parse_stream([_rle("rejected"), _res("API Error: something went wrong")])
+    assert o.status == "usage_limit" and o.reset_at == 1794025200
+
+
+def test_rate_limit_event_rejected_without_result():
+    o = parse_stream([_rle("rejected", resets_at=1794025200000)])  # milliseconds
+    assert o.status == "usage_limit" and o.reset_at == 1794025200
+
+
+def test_rate_limit_event_allowed_is_not_a_limit_and_is_recorded():
+    o = parse_stream([_rle("allowed", five=0.42, seven=0.17), _res("ok", is_error=False)])
+    assert o.status == "ok" and o.reset_at is None
+    assert o.rate_limit["unifiedWindows"]["five_hour"]["utilization"] == 0.42
+
+
+def test_real_fixture_rate_limit_recorded():
+    o = parse_stream(open(FIX / "stream_ok.jsonl"))
+    assert o.rate_limit is not None and "five_hour" in o.rate_limit["unifiedWindows"]
+
+
+@pytest.mark.parametrize("text", ["You've hit your limit · resets 3pm",
+                                  "Claude AI usage limit reached|1762480800",
+                                  "Rate limit exceeded"])
+def test_limit_texts(text):
+    assert parse_stream([_res(text)]).status == "usage_limit"
+
+
+@pytest.mark.parametrize("text", ["Context limit reached", "context window limit reached",
+                                  "Prompt is too long: context limit reached"])
+def test_context_limit_is_not_usage_limit(text):
+    assert parse_stream([_res(text)]).status == "error"
+
+
+def _local(h, m=0):
+    import datetime as dt
+    return dt.datetime(2026, 11, 6, h, m).timestamp()
+
+
+def test_parse_reset_text_rules():
+    now = _local(13)
+    assert _parse_reset("You've hit your limit · resets 3pm", now) == _local(15)
+    assert _parse_reset("resets 2:30pm", now) == _local(14, 30)
+    assert _parse_reset("resets 11am", now) is None          # already passed: no +1 day
+    assert _parse_reset("resets 11pm", now) is None          # > 6 h away: use back-off
+    assert _parse_reset("resets 1pm", now) is None           # == now
+
+
+def test_usage_limit_tokens_fall_back_to_model_usage():
+    o = parse_stream(open(FIX / "stream_limit.jsonl"))
+    assert o.status == "usage_limit"
+    assert o.usage == Usage(2, 4, 9075, 12072)
+
+
+def test_run_claude_scans_stderr_for_limit(tmp_path):
+    b = _fake(tmp_path, "import sys\nsys.stderr.write(\"You've hit your limit \\u00b7 resets 3pm\\n\")\nsys.exit(1)\n")
+    o = run_claude("hi", tmp_path, 30, claude_bin=b)
+    assert o.status == "usage_limit", o
+
+
+def test_run_claude_stderr_context_limit_is_error(tmp_path):
+    b = _fake(tmp_path, "import sys\nsys.stderr.write('context limit reached\\n')\nsys.exit(1)\n")
+    assert run_claude("hi", tmp_path, 30, claude_bin=b).status == "error"
+
+
+def test_run_claude_writes_stream_log(tmp_path):
+    fx = FIX / "stream_ok.jsonl"
+    b = _fake(tmp_path, f"import sys\nsys.stdout.write(open({str(fx)!r}).read())\n")
+    log = tmp_path / "logs" / "agent.jsonl"
+    o = run_claude("hi", tmp_path, 30, claude_bin=b, stream_log=log)
+    assert o.status == "ok" and log.read_text() == fx.read_text()
