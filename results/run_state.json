@@ -1,6 +1,6 @@
 {
   "backoff_idx": 0,
-  "best_commit": "05d9ef7e0f153719edc92fd82e6704476af9fadf",
+  "best_commit": "8d5ad7749801a554c35100c6ddfdbb3937dfca53",
   "best_ours_ms": {
     "decode_16384": 0.05451199971139431,
     "decode_2048": 0.01228800043463707,
@@ -17,7 +17,7 @@
   "best_score": 1.1500793175962247,
   "consecutive_errors": 0,
   "harness_hash": "9a97d1c1f95051e55de77474be0685f8f980b4e8f6d31e3beccb38bbe364fa3a",
-  "next_exp_id": 7,
+  "next_exp_id": 8,
   "pause_reason": null,
   "pause_until": null,
   "stop_reason": null,

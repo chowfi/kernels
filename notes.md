@@ -37,3 +37,9 @@ start_m = num_m - 1 - pid1, so every head's heaviest m-blocks launch first and d
 q-heads sharing a KV head are adjacent CTAs streaming the same K/V in lockstep (L2 reuse). Aimed at prefill_2048/4096
 (~3-12 waves at 1 block/SM). Passed check. Next: 2-blocks/SM prefill configs, decode split sweep (BLOCK_N 128, stages 3-4,
 split target) for decode_32768 (~1.015x), persistent prefill grid if tail still matters.
+
+Experiment 7: decode split-kernel config sweep. _attn_fwd_split wrapped in triton.autotune over (BLOCK_N, warps, stages)
+{64w4s2 (old), 64w4s3, 64w4s4, 64w2s3, 64w8s3, 32w4s4, 32w2s4, 128w4s2, 128w8s2}, key SEQ_Q/SEQ_KV/GROUP/NUM_SPLITS/BLOCK_M/D.
+Motivation: HEAD decode_32768 profile = 74% DRAM peak, L2 hit 0.7%, 2 blocks/SM (38.9 KB smem), 1.74 waves; config never tuned.
+Chunk sizing stays 64-aligned (kv_mask covers BLOCK_N=128). Passed check. Next: combine kernel (150 regs, 32 CTAs, one row
+each; could pack/parallelize over D), split-count target sized to whole waves of resident CTAs, unmasked full-block loop in split.
