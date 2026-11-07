@@ -27,7 +27,9 @@ BANNED_ATTRS = {"nn", "functional", "ops", "matmul", "bmm", "baddbmm", "addbmm",
                 "einsum", "softmax", "log_softmax", "tensordot", "linalg",
                 "scaled_dot_product_attention", "Stream", "stream", "ExternalStream", "set_stream",
                 "CUDAGraph", "graph", "graphs", "data_ptr", "_version", "compile", "_C",
-                "untyped_storage", "storage"}
+                "untyped_storage", "storage",
+                # host reads of tensor contents (data-keyed caches) and Triton launch-hook spoofing
+                "item", "tolist", "cpu", "numpy", "knobs", "launch_enter_hook", "launch_exit_hook"}
 
 
 def _git(root: Path, *args: str) -> str:
@@ -97,7 +99,8 @@ Guard rules enforced by `driver/guard.py` (a breach reverts the whole experiment
   `matmul`, `bmm`, `baddbmm`, `addbmm`, `mm`, `addmm`, `einsum`, `softmax`, `log_softmax`,
   `tensordot`, `linalg`, `scaled_dot_product_attention`, `Stream`, `stream`, `ExternalStream`,
   `set_stream`, `CUDAGraph`, `graph`, `graphs`, `data_ptr`, `_version`, `compile`, `_C`,
-  `untyped_storage`, `storage`. The `@` operator is banned (use `tl.dot` inside the kernel).
+  `untyped_storage`, `storage`, `item`, `tolist`, `cpu`, `numpy`, `knobs`, `launch_enter_hook`,
+  `launch_exit_hook`. The `@` operator is banned (use `tl.dot` inside the kernel).
   So: no side streams, no CUDA graphs, no torch/cuBLAS/FA/SDPA attention, and no caches keyed on
   tensor identity or contents.
 - These builtins may not appear at all (not called, not aliased, not passed as a value): `setattr`,

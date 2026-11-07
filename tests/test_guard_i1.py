@@ -37,6 +37,12 @@ SMOKE = (REPO / "tests" / "fixtures" / "kernels" / "smoke_exp1.py").read_text()
     "def f(q, k):\n    return q @ k\n",
     "def f(q, k):\n    q @= k\n",
     "fn = torch.compile(lambda x: x)\n",
+    "_C2 = {}\ndef f(q, o):\n    _C2[(id(q), q[0, 0, 0, 0].item())] = o\n",
+    "def f(q):\n    return q.flatten()[:4].tolist()\n",
+    "def f(q):\n    return q.cpu()\n",
+    "def f(q):\n    return q.numpy()\n",
+    "def f():\n    triton.knobs.runtime.launch_enter_hook({'name': 'x'})\n",
+    "def f(h):\n    return h.launch_enter_hook\n",
 ])
 def test_guard_rejects_non_triton_and_gaming(snippet):
     assert kernel_violation(SEED + "\n" + snippet) is not None

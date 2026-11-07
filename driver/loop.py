@@ -48,6 +48,7 @@ GPU_QUERY_CMD = "nvidia-smi --query-compute-apps=pid,process_name --format=csv,n
 GPU_IDLE_WAIT_S = 60.0
 GPU_POLL_S = 5.0
 # Leftovers of the agent's own tools, safe to kill before an official bench (own user only).
+# Matched against argv tokens: a module name after -m, or an executable basename.
 STRAY_MARKERS = ("harness.check", "harness.profile", "ncu")
 BENCH_TIMEOUT_S = 15 * 60
 RETIME_S = 3 * 3600
@@ -97,6 +98,18 @@ def _one_line(s: str, n: int = 120) -> str:
     s = " ".join(str(s).split())
     return s if len(s) <= n else s[: n - 3] + "..."
 
+
+
+def _is_stray(cmd: str) -> bool:
+    """True if a command line is one of the agent's own tools: `-m harness.check|harness.profile`
+    or an `ncu` executable (token match, so "ncurses" or another word containing "ncu" never matches)."""
+    toks = cmd.split()
+    for i, tok in enumerate(toks):
+        if tok == "-m" and i + 1 < len(toks) and toks[i + 1] in STRAY_MARKERS:
+            return True
+        if Path(tok).name in STRAY_MARKERS:
+            return True
+    return False
 
 class Loop:
     def __init__(self, root: Path, args: argparse.Namespace, now: Callable[[], float],
@@ -231,7 +244,7 @@ class Loop:
             return True
         for pid, name in apps:
             cmd = self._cmdline(pid)
-            if self._own(pid) and any(m in cmd for m in STRAY_MARKERS):
+            if self._own(pid) and _is_stray(cmd):
                 try:
                     os.kill(pid, signal.SIGKILL)
                     self.log(f"gpu idle check: killed stray GPU process {pid} ({_one_line(cmd, 160)})")

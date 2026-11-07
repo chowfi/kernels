@@ -644,3 +644,13 @@ def test_foreign_gpu_process_makes_bench_crash_gpu_busy(loop_env):
         assert sum(loop_env["time"].slept) >= 60
     finally:
         other.kill()
+
+
+def test_is_stray_matches_tokens_not_substrings():
+    from driver.loop import _is_stray
+    assert _is_stray("/usr/bin/python3 -m harness.check")
+    assert _is_stray("uv run --frozen python -m harness.profile --x")
+    assert _is_stray("/usr/local/cuda/bin/ncu --nvtx python -m harness.profile")
+    assert not _is_stray("python my_ncurses_app.py")
+    assert not _is_stray("python uncut.py")
+    assert not _is_stray("python -m other.harness.check_tool")
