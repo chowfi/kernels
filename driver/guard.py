@@ -17,7 +17,17 @@ HARNESS_WRITTEN = {"runs.log"}
 ALLOWED_IMPORTS = {"torch", "triton", "math", "typing", "__future__"}
 # Ways to reach native code / dynamic imports without an import statement.
 BANNED_TOKENS = ["inline_asm", "__import__", "importlib", "cpp_extension", "load_inline",
-                 "load_library", "jiterator", "ctypes", "exec(", "eval("]
+                 "load_library", "jiterator", "ctypes", "exec(", "eval(",
+                 # I1: delegating attention to non-Triton kernels, data-keyed caches, graphs/compile
+                 "scaled_dot_product_attention", "flash_attn", "torch.ops", "data_ptr", "CUDAGraph",
+                 "cuda.graph", "torch.compile", "_dynamo", "_inductor"]
+# I1: attribute names (and imported names / literal getattr names) that are rejected anywhere:
+# torch math that could replace the Triton kernel, op registries, streams, graphs, data identity.
+BANNED_ATTRS = {"nn", "functional", "ops", "matmul", "bmm", "baddbmm", "addbmm", "mm", "addmm",
+                "einsum", "softmax", "log_softmax", "tensordot", "linalg",
+                "scaled_dot_product_attention", "Stream", "stream", "ExternalStream", "set_stream",
+                "CUDAGraph", "graph", "graphs", "data_ptr", "_version", "compile", "_C",
+                "untyped_storage", "storage"}
 
 
 def _git(root: Path, *args: str) -> str:
@@ -78,7 +88,18 @@ Guard rules enforced by `driver/guard.py` (a breach reverts the whole experiment
 - `kernel/attention.py` may import only torch, triton, math and typing. No relative or star imports.
 - No inline PTX or assembly: nothing containing `inline_asm`, and no string literal containing the
   standalone word "asm" (never write it in a string; avoid it in comments too). Also banned anywhere in
-  the file: cpp_extension, load_inline, load_library, jiterator, ctypes, importlib.
+  the file: `cpp_extension`, `load_inline`, `load_library`, `jiterator`, `ctypes`, `importlib`.
+- All attention math must run in your own Triton kernels; torch is only for allocation, views,
+  reshapes, strides and device queries. Banned anywhere in the file (substring match, comments
+  included): `scaled_dot_product_attention`, `flash_attn`, `torch.ops`, `data_ptr`, `CUDAGraph`,
+  `cuda.graph`, `torch.compile`, `_dynamo`, `_inductor`. Banned as an attribute (`x.name`), an
+  imported name or module component, or a literal `getattr` name: `nn`, `functional`, `ops`,
+  `matmul`, `bmm`, `baddbmm`, `addbmm`, `mm`, `addmm`, `einsum`, `softmax`, `log_softmax`,
+  `tensordot`, `linalg`, `scaled_dot_product_attention`, `Stream`, `stream`, `ExternalStream`,
+  `set_stream`, `CUDAGraph`, `graph`, `graphs`, `data_ptr`, `_version`, `compile`, `_C`,
+  `untyped_storage`, `storage`. The `@` operator is banned (use `tl.dot` inside the kernel).
+  So: no side streams, no CUDA graphs, no torch/cuBLAS/FA/SDPA attention, and no caches keyed on
+  tensor identity or contents.
 - These builtins may not appear at all (not called, not aliased, not passed as a value): `setattr`,
   `delattr`, `open`, `exec`, `eval`, `compile`, `globals`, `vars`, `locals`, `__import__`,
   `breakpoint`, `input`, `__builtins__`. `getattr`/`hasattr` only as a direct call with a literal
@@ -211,6 +232,8 @@ def kernel_violation(src: str) -> str | None:
             for a in node.names:
                 if a.name.split(".")[0] not in ALLOWED_IMPORTS:
                     return f"kernel/attention.py imports {a.name!r}"
+                if BANNED_ATTRS & set(a.name.split(".")):
+                    return f"kernel/attention.py imports {a.name!r} (non-Triton math/streams/graphs)"
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 return "kernel/attention.py uses a relative import"
@@ -218,6 +241,10 @@ def kernel_violation(src: str) -> str | None:
                 return f"kernel/attention.py imports {node.module!r}"
             if any(a.name == "*" for a in node.names):
                 return "kernel/attention.py uses a star import"
+            for a in node.names:
+                if BANNED_ATTRS & {*(node.module or "").split("."), a.name}:
+                    return (f"kernel/attention.py imports {a.name!r} from {node.module!r} "
+                            f"(non-Triton math/streams/graphs)")
 
     b = _bindings(tree)
     def_roots = {n for n, kinds in b.items() if set(kinds) == {"def"}}
@@ -235,7 +262,7 @@ def kernel_violation(src: str) -> str | None:
                 return (f"kernel/attention.py calls {node.func.id}() with a non-literal name "
                         f"(line {node.lineno})")
             name = node.args[1].value
-            if ASM_RE.search(name) or name in BANNED_DUNDERS:
+            if ASM_RE.search(name) or name in BANNED_DUNDERS or name in BANNED_ATTRS:
                 return f"kernel/attention.py reaches {name!r} via {node.func.id}()"
             literal_calls.add(id(node.func))
 
@@ -247,6 +274,11 @@ def kernel_violation(src: str) -> str | None:
                 return f"kernel/attention.py uses {node.id} other than as a literal-name call (line {node.lineno})"
         if isinstance(node, ast.Attribute) and node.attr in BANNED_DUNDERS:
             return f"kernel/attention.py accesses {node.attr} (line {node.lineno})"
+        if isinstance(node, ast.Attribute) and node.attr in BANNED_ATTRS:
+            return (f"kernel/attention.py uses .{node.attr} (line {node.lineno}): attention math "
+                    f"must run in Triton; no torch math ops, streams, graphs or data_ptr")
+        if isinstance(node, (ast.BinOp, ast.AugAssign)) and isinstance(node.op, ast.MatMult):
+            return f"kernel/attention.py uses the @ operator (line {node.lineno}); use tl.dot in Triton"
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and ASM_RE.search(node.value):
             return f"kernel/attention.py has a string literal mentioning asm (line {node.lineno})"
         for t in _targets(node):

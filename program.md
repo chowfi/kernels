@@ -86,6 +86,16 @@ unrelated changes: if the score moves we must be able to say why.
 - No hard-coding per benchmark shape (no "if seq == 8192" special values tuned to the table). Shape-keyed
   autotune configs and a prefill/decode dispatch are fine, because those are general mechanisms.
 - Triton + Python only. No inline asm, no CUDA/C++.
+- All attention math (Q.K^T, softmax, P.V, split combines) must run in your Triton kernels. Torch is
+  allowed only for allocation (`torch.empty`, `empty_like`, `zeros`), views/reshapes/strides and
+  device queries. No `torch.matmul`/`bmm`/`einsum`/`softmax`, no SDPA, no `torch.ops`, no FlashAttention.
+- Caches may hold only configs, compiled kernels or workspace buffers, keyed on shape, dtype and device.
+  Never key on `data_ptr`, tensor identity or values, and never return a cached output.
+- No CUDA streams and no CUDA graphs: launch everything on the current stream.
+- The official benchmark enforces this: after timing each shape it refills q, k, v in place with new
+  random data, calls your kernel once more and checks the result against a fresh reference, and it
+  profiles that call and fails the experiment if any CUDA kernel other than your Triton kernels (or
+  torch's fill/copy kernels from allocation) runs.
 - Keep the signature `attention(q, k, v, causal)` and the FA2 layout `[B, S, H, D]`.
 - Do not touch git state (no commit, no checkout, no branch).
 
@@ -93,7 +103,18 @@ Guard rules enforced by `driver/guard.py` (a breach reverts the whole experiment
 - `kernel/attention.py` may import only torch, triton, math and typing. No relative or star imports.
 - No inline PTX or assembly: nothing containing `inline_asm`, and no string literal containing the
   standalone word "asm" (never write it in a string; avoid it in comments too). Also banned anywhere in
-  the file: cpp_extension, load_inline, load_library, jiterator, ctypes, importlib.
+  the file: `cpp_extension`, `load_inline`, `load_library`, `jiterator`, `ctypes`, `importlib`.
+- All attention math must run in your own Triton kernels; torch is only for allocation, views,
+  reshapes, strides and device queries. Banned anywhere in the file (substring match, comments
+  included): `scaled_dot_product_attention`, `flash_attn`, `torch.ops`, `data_ptr`, `CUDAGraph`,
+  `cuda.graph`, `torch.compile`, `_dynamo`, `_inductor`. Banned as an attribute (`x.name`), an
+  imported name or module component, or a literal `getattr` name: `nn`, `functional`, `ops`,
+  `matmul`, `bmm`, `baddbmm`, `addbmm`, `mm`, `addmm`, `einsum`, `softmax`, `log_softmax`,
+  `tensordot`, `linalg`, `scaled_dot_product_attention`, `Stream`, `stream`, `ExternalStream`,
+  `set_stream`, `CUDAGraph`, `graph`, `graphs`, `data_ptr`, `_version`, `compile`, `_C`,
+  `untyped_storage`, `storage`. The `@` operator is banned (use `tl.dot` inside the kernel).
+  So: no side streams, no CUDA graphs, no torch/cuBLAS/FA/SDPA attention, and no caches keyed on
+  tensor identity or contents.
 - These builtins may not appear at all (not called, not aliased, not passed as a value): `setattr`,
   `delattr`, `open`, `exec`, `eval`, `compile`, `globals`, `vars`, `locals`, `__import__`,
   `breakpoint`, `input`, `__builtins__`. `getattr`/`hasattr` only as a direct call with a literal
