@@ -468,6 +468,26 @@ SEED_KERNEL = (REPO / "kernel" / "attention.py").read_text()
     "def f(q):\n    return q.__class__\n",
     "g = attention.__globals__\n",
     "f = getattr(tl, '__dict__')\n",
+    # round 3: reviewer's bypasses of alias tracking
+    "def f(m):\n    m.cuda.synchronize = None\nf(torch)\n",
+    "def f(t=torch.cuda):\n    t.synchronize = None\n",
+    "(t,) = (torch,)\nt.x = 1\n",
+    "c = True\nt = torch if c else None\nt.x = 1\n",
+    "for m in (torch.cuda,):\n    m.x = 1\n",
+    "with open_ctx() as m:\n    m.x = 1\n",
+    "def g():\n    return torch.cuda\ng().synchronize = None\n",
+    "[torch.cuda][0].x = 1\n",
+    "type(torch.cuda.Event()).elapsed_time = None\n",
+    "e = exec\n",
+    "g = getattr\nn = 'x'\ng(torch, n)\n",
+    "b = __builtins__\n",
+    "fs = [setattr]\n",
+    "def h(x=breakpoint):\n    pass\n",
+    "def attention2():\n    pass\nattention2 = torch.cuda\nattention2.synchronize = None\n",
+    "class K:\n    pass\ndef f(K):\n    K.x = 1\n",
+    "_C = {}\n_C = torch.cuda.__dict__\n_C['synchronize'] = None\n",
+    "_C = {}\n_C[0] = torch.cuda\n_C[0].synchronize = None\n",
+    "def f(q):\n    q[0] = 1\n",
 ])
 def test_guard_rejects_tampering_patterns(snippet):
     from driver.guard import kernel_violation
@@ -483,6 +503,9 @@ def test_guard_rejects_tampering_patterns(snippet):
     "class Cfg:\n    pass\nCfg.block = 64\n",
     "msg = 'enthusiasm for plasma physics'\n",
     "def g(cls):\n    cls.n += 1\n",
+    "_CACHE = {}\ndef get(k, v):\n    _CACHE[k] = v\n    return _CACHE[k]\n",
+    "def f(k):\n    seen = set()\n    memo = dict()\n    memo[k] = 1\n    return memo\n",
+    "attention._cache = {}\nattention._cache['k'] = 1\n",
 ])
 def test_guard_accepts_legit_code(snippet):
     from driver.guard import kernel_violation
@@ -493,6 +516,12 @@ def test_guard_accepts_legit_code(snippet):
 def test_guard_rules_text():
     from driver.guard import GUARD_RULES
     assert "kernel/attention.py" in GUARD_RULES and "inline_asm" in GUARD_RULES
+    assert "breakpoint" in GUARD_RULES and "input" in GUARD_RULES
+
+
+def test_program_md_guard_section_matches_guard_rules():
+    from driver.guard import GUARD_RULES
+    assert GUARD_RULES.strip() in (REPO / "program.md").read_text()
 
 
 def test_integrity_error_surfaces_in_progress_log(loop_env):

@@ -59,58 +59,62 @@ def changed_files(root: Path) -> set[str]:
 
 
 # Builtins that can rebind/introspect module state or reach outside the kernel.
-BANNED_CALLS = {"setattr", "delattr", "open", "exec", "eval", "compile", "globals", "vars",
-                "locals", "__import__", "breakpoint", "input"}
-
-
-# Dunder attributes that expose or rebind object/module internals. Accessing them at all is
-# rejected (a kernel never needs them).
+# Builtins that can rebind/introspect state, run dynamic code or reach outside the kernel.
+# Any bare-name LOAD of these is rejected (calling, aliasing `e = exec`, passing as a value).
+BANNED_NAMES = {"setattr", "delattr", "open", "exec", "eval", "compile", "globals", "vars",
+                "locals", "__import__", "breakpoint", "input", "__builtins__"}
+# getattr/hasattr are allowed only as a direct call with a literal attribute name.
+LITERAL_ONLY = {"getattr", "hasattr"}
+# Dunder attributes that expose or rebind object/module internals: accessing them is rejected.
 BANNED_DUNDERS = {"__dict__", "__setattr__", "__delattr__", "__class__", "__builtins__",
                   "__globals__", "__code__", "__closure__", "__subclasses__",
                   "__getattribute__", "__mro__", "__bases__"}
 ASM_RE = re.compile(r"inline_asm|\basm\b", re.I)
+WRITE_ROOT_NAMES = {"self", "ctx", "cls"}
+CONTAINER_CALLS = {"dict", "list", "set"}
 
 GUARD_RULES = """\
-Rules enforced by the driver on every experiment (any breach = status `violation`, all changes reverted):
-- You may change only kernel/attention.py, notes.md and experiments/current.json. Any other change
-  (including new untracked files anywhere, results/*.json, results.tsv, harness/, program.md) is a violation.
-  Do not commit, branch or otherwise move git HEAD.
-- kernel/attention.py may import only torch, triton, math and typing. No relative or star imports.
-- No inline PTX/assembly: nothing named inline_asm, no string mentioning asm, no CUDA/C++ extensions
-  (cpp_extension, load_inline, load_library, jiterator, ctypes).
-- No dynamic code or introspection: no exec, eval, compile, open, globals, vars, locals, __import__,
-  importlib, setattr, delattr; getattr/hasattr only with a literal attribute name.
-- Never modify imported modules: no assignment, augmented assignment or del on any attribute or item of
-  torch, triton, tl, math, typing (or anything bound from them, e.g. `ev = torch.cuda.Event`).
-  Attributes of your own objects (self.x, ctx.sm_scale, attention._cache) are fine.
-- No access to object internals: __dict__, __setattr__, __delattr__, __class__, __builtins__, __globals__,
-  __code__, __closure__, __subclasses__, __getattribute__, __mro__, __bases__.
-- The official benchmark also checks that do_bench, torch.cuda.Event (and elapsed_time/record),
-  torch.cuda.synchronize and the harness timer are untouched after importing and running your kernel;
+Guard rules enforced by `driver/guard.py` (a breach reverts the whole experiment as `violation`):
+- `kernel/attention.py` may import only torch, triton, math and typing. No relative or star imports.
+- No inline PTX or assembly: nothing containing `inline_asm`, and no string literal containing the
+  standalone word "asm" (never write it in a string; avoid it in comments too). Also banned anywhere in
+  the file: cpp_extension, load_inline, load_library, jiterator, ctypes, importlib.
+- These builtins may not appear at all (not called, not aliased, not passed as a value): `setattr`,
+  `delattr`, `open`, `exec`, `eval`, `compile`, `globals`, `vars`, `locals`, `__import__`,
+  `breakpoint`, `input`, `__builtins__`. `getattr`/`hasattr` only as a direct call with a literal
+  string attribute name, e.g. `getattr(tl, "dot")`.
+- No access to object internals: `__dict__`, `__setattr__`, `__delattr__`, `__class__`, `__builtins__`,
+  `__globals__`, `__code__`, `__closure__`, `__subclasses__`, `__getattribute__`, `__mro__`, `__bases__`;
+  no attribute or item write through any dunder attribute.
+- Attribute and item writes (`x.a = ...`, `x.a += ...`, `del x.a`, `x[i] = ...`, and loop/with targets
+  like `for x.a in ...`) are allowed ONLY when the leftmost name `x` is:
+  - `self`, `ctx` or `cls`; or
+  - a function or class defined in the file with `def`/`class` and never rebound anywhere
+    (no assignment, import, parameter, loop/with target of the same name), e.g. `attention._cache = {}`; or
+  - for item writes only (`x[k] = v`, `x[k][j] = v`, no attribute in between): a name bound exactly once,
+    by `x = {}` / `[]` / `{...}` / `dict()` / `list()` / `set()`, and never otherwise rebound,
+    e.g. `_CACHE = {}` then `_CACHE[key] = kernel`.
+  Everything else is rejected: writes through parameters, module names, aliases, call results, subscripts
+  or conditional expressions. In particular you cannot write into tensors with `t[...] = ...` in Python:
+  use torch ops (`t.zero_()`, `t.copy_(x)`, `torch.empty(...)`) or `tl.store` inside the kernel.
+- The official benchmark verifies that `do_bench`, `torch.cuda.Event` (and `elapsed_time`/`record`),
+  `torch.cuda.synchronize` and the harness timer are untouched after your kernel is imported and run;
   tampering fails the experiment.
 """
 
 
-def _root_name(node: ast.AST) -> str | None:
-    """Root Name of an attribute/subscript chain (`torch.cuda.Event.x` -> 'torch');
-    `getattr(x, ...)` is treated as part of the chain of x."""
-    while True:
-        if isinstance(node, (ast.Attribute, ast.Subscript)):
-            node = node.value
-        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-              and node.func.id == "getattr" and node.args):
-            node = node.args[0]
-        else:
-            break
-    return node.id if isinstance(node, ast.Name) else None
+def _chain(node: ast.AST) -> tuple[ast.AST, list[ast.AST]]:
+    """(root, links) of an attribute/subscript chain; links run outermost first."""
+    links = []
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        links.append(node)
+        node = node.value
+    return node, links
 
 
 def _chain_has_dunder(node: ast.AST) -> bool:
-    while isinstance(node, (ast.Attribute, ast.Subscript)):
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__") and node.attr.endswith("__"):
-            return True
-        node = node.value
-    return False
+    return any(isinstance(l, ast.Attribute) and l.attr.startswith("__") and l.attr.endswith("__")
+               for l in _chain(node)[1])
 
 
 def _targets(node: ast.AST) -> list[ast.AST]:
@@ -124,6 +128,8 @@ def _targets(node: ast.AST) -> list[ast.AST]:
         ts = [node.target]
     elif isinstance(node, (ast.With, ast.AsyncWith)):
         ts = [i.optional_vars for i in node.items if i.optional_vars is not None]
+    elif isinstance(node, ast.NamedExpr):
+        ts = [node.target]
     else:
         return []
     out: list[ast.AST] = []
@@ -139,9 +145,51 @@ def _targets(node: ast.AST) -> list[ast.AST]:
     return out
 
 
+def _is_container_literal(v: ast.AST | None) -> bool:
+    if isinstance(v, (ast.Dict, ast.List, ast.Set)):
+        return True
+    return (isinstance(v, ast.Call) and isinstance(v.func, ast.Name)
+            and v.func.id in CONTAINER_CALLS)
+
+
+def _bindings(tree: ast.AST) -> dict[str, list[str]]:
+    """Every way each name is bound in the file: 'def', 'container' (single-name assignment from a
+    container literal) or 'other' (assignment, import, parameter, loop/with/except target, ...)."""
+    b: dict[str, list[str]] = {}
+
+    def add(name: str, kind: str) -> None:
+        b.setdefault(name, []).append(kind)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            add(node.name, "def")
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            a = node.args
+            for arg in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg]:
+                if arg is not None:
+                    add(arg.arg, "other")
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for al in node.names:
+                add(al.asname or al.name.split(".")[0], "other")
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            add(node.name, "other")
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            add(node.name, "other")
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            add(node.rest, "other")
+        single_container = (
+            (isinstance(node, ast.Assign) and len(node.targets) == 1
+             and isinstance(node.targets[0], ast.Name) and _is_container_literal(node.value))
+            or (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+                and _is_container_literal(node.value)))
+        for t in _targets(node):
+            if isinstance(t, ast.Name):
+                add(t.id, "container" if single_container else "other")
+    return b
+
+
 def kernel_violation(src: str) -> str | None:
-    """Policy check for kernel/attention.py: allowed imports only, no native code, and nothing
-    that could rebind torch/triton/math/typing attributes (e.g. timing functions)."""
+    """Policy check for kernel/attention.py (see GUARD_RULES)."""
     for tok in BANNED_TOKENS:
         if tok in src:
             return f"kernel/attention.py contains banned token {tok!r}"
@@ -149,56 +197,60 @@ def kernel_violation(src: str) -> str | None:
         tree = ast.parse(src)
     except SyntaxError:
         return None  # not a policy breach; the bench will report it as crashed
-    modules: set[str] = set()  # every name bound by an import (modules and their aliases)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
                 if a.name.split(".")[0] not in ALLOWED_IMPORTS:
                     return f"kernel/attention.py imports {a.name!r}"
-                modules.add(a.asname or a.name.split(".")[0])
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 return "kernel/attention.py uses a relative import"
             if (node.module or "").split(".")[0] not in ALLOWED_IMPORTS:
                 return f"kernel/attention.py imports {node.module!r}"
-            for a in node.names:
-                if a.name == "*":
-                    return "kernel/attention.py uses a star import"
-                modules.add(a.asname or a.name)
-    # Names bound from module-rooted expressions are aliases too (`ev = torch.cuda.Event`).
-    changed = True
-    while changed:
-        changed = False
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and node.value is not None \
-                    and _root_name(node.value) in modules:
-                for t in (_targets(node) if not isinstance(node, ast.NamedExpr) else [node.target]):
-                    if isinstance(t, ast.Name) and t.id not in modules:
-                        modules.add(t.id)
-                        changed = True
+            if any(a.name == "*" for a in node.names):
+                return "kernel/attention.py uses a star import"
+
+    b = _bindings(tree)
+    def_roots = {n for n, kinds in b.items() if set(kinds) == {"def"}}
+    container_ok = not (CONTAINER_CALLS & set(b))
+    container_roots = {n for n, kinds in b.items() if kinds == ["container"]} if container_ok else set()
+
+    literal_calls: set[int] = set()  # ids of getattr/hasattr Name nodes used correctly
     for node in ast.walk(tree):
-        for t in _targets(node):
-            # Writes into imported modules (or aliases of them) are how timing functions would be
-            # monkeypatched. Writes on locals/params/own functions (self.x, ctx.s) are fine.
-            if isinstance(t, (ast.Attribute, ast.Subscript)) and (
-                    _root_name(t) in modules or _chain_has_dunder(t)):
-                return (f"kernel/attention.py modifies module state "
-                        f"({ast.unparse(t)}, line {getattr(t, 'lineno', '?')})")
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            f = node.func.id
-            if f in BANNED_CALLS:
-                return f"kernel/attention.py calls {f}() (line {node.lineno})"
-            if f in ("getattr", "hasattr"):
-                if len(node.args) < 2 or not (isinstance(node.args[1], ast.Constant)
-                                              and isinstance(node.args[1].value, str)):
-                    return f"kernel/attention.py calls {f}() with a non-literal name (line {node.lineno})"
-                name = node.args[1].value
-                if ASM_RE.search(name) or name in BANNED_DUNDERS:
-                    return f"kernel/attention.py reaches {name!r} via {f}()"
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in LITERAL_ONLY):
+            if len(node.args) < 2 or not (isinstance(node.args[1], ast.Constant)
+                                          and isinstance(node.args[1].value, str)):
+                return (f"kernel/attention.py calls {node.func.id}() with a non-literal name "
+                        f"(line {node.lineno})")
+            name = node.args[1].value
+            if ASM_RE.search(name) or name in BANNED_DUNDERS:
+                return f"kernel/attention.py reaches {name!r} via {node.func.id}()"
+            literal_calls.add(id(node.func))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id in BANNED_NAMES:
+                return f"kernel/attention.py uses {node.id} (line {node.lineno})"
+            if node.id in LITERAL_ONLY and id(node) not in literal_calls:
+                return f"kernel/attention.py uses {node.id} other than as a literal-name call (line {node.lineno})"
         if isinstance(node, ast.Attribute) and node.attr in BANNED_DUNDERS:
             return f"kernel/attention.py accesses {node.attr} (line {node.lineno})"
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and ASM_RE.search(node.value):
             return f"kernel/attention.py has a string literal mentioning asm (line {node.lineno})"
+        for t in _targets(node):
+            if not isinstance(t, (ast.Attribute, ast.Subscript)):
+                continue
+            where = f"{ast.unparse(t)}, line {getattr(t, 'lineno', '?')}"
+            if _chain_has_dunder(t):
+                return f"kernel/attention.py writes through a dunder attribute ({where})"
+            root, links = _chain(t)
+            ok = isinstance(root, ast.Name) and (
+                root.id in WRITE_ROOT_NAMES or root.id in def_roots
+                or (root.id in container_roots and all(isinstance(l, ast.Subscript) for l in links)))
+            if not ok:
+                return (f"kernel/attention.py writes an attribute/item of something that is not "
+                        f"self/ctx/cls, an own def/class, or an own container literal ({where})")
     return None
 
 

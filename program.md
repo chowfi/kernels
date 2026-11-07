@@ -92,17 +92,29 @@ unrelated changes: if the score moves we must be able to say why.
 Guard rules enforced by `driver/guard.py` (a breach reverts the whole experiment as `violation`):
 - `kernel/attention.py` may import only torch, triton, math and typing. No relative or star imports.
 - No inline PTX or assembly: nothing containing `inline_asm`, and no string literal containing the
-  standalone word "asm" (never write it in a string; avoid it in comments too). Also banned:
-  cpp_extension, load_inline, load_library, jiterator, ctypes.
-- No dynamic code or introspection: no `exec`, `eval`, `compile`, `open`, `globals`, `vars`, `locals`,
-  `__import__`, `importlib`, `setattr`, `delattr`. `getattr`/`hasattr` only with a literal attribute name.
-- Never assign to, augment, or delete an attribute or item of an imported module (torch, triton, tl,
-  math, typing) or of any name bound from one (for example `ev = torch.cuda.Event; ev.x = 1`).
-  Attributes of your own objects (`self.x`, `ctx.sm_scale`, `attention._cache`) are allowed.
+  standalone word "asm" (never write it in a string; avoid it in comments too). Also banned anywhere in
+  the file: cpp_extension, load_inline, load_library, jiterator, ctypes, importlib.
+- These builtins may not appear at all (not called, not aliased, not passed as a value): `setattr`,
+  `delattr`, `open`, `exec`, `eval`, `compile`, `globals`, `vars`, `locals`, `__import__`,
+  `breakpoint`, `input`, `__builtins__`. `getattr`/`hasattr` only as a direct call with a literal
+  string attribute name, e.g. `getattr(tl, "dot")`.
 - No access to object internals: `__dict__`, `__setattr__`, `__delattr__`, `__class__`, `__builtins__`,
-  `__globals__`, `__code__`, `__closure__`, `__subclasses__`, `__getattribute__`, `__mro__`, `__bases__`.
-- The official benchmark verifies that `do_bench`, `torch.cuda.Event`, `torch.cuda.synchronize` and the
-  harness timer are untouched after your kernel runs; tampering fails the experiment.
+  `__globals__`, `__code__`, `__closure__`, `__subclasses__`, `__getattribute__`, `__mro__`, `__bases__`;
+  no attribute or item write through any dunder attribute.
+- Attribute and item writes (`x.a = ...`, `x.a += ...`, `del x.a`, `x[i] = ...`, and loop/with targets
+  like `for x.a in ...`) are allowed ONLY when the leftmost name `x` is:
+  - `self`, `ctx` or `cls`; or
+  - a function or class defined in the file with `def`/`class` and never rebound anywhere
+    (no assignment, import, parameter, loop/with target of the same name), e.g. `attention._cache = {}`; or
+  - for item writes only (`x[k] = v`, `x[k][j] = v`, no attribute in between): a name bound exactly once,
+    by `x = {}` / `[]` / `{...}` / `dict()` / `list()` / `set()`, and never otherwise rebound,
+    e.g. `_CACHE = {}` then `_CACHE[key] = kernel`.
+  Everything else is rejected: writes through parameters, module names, aliases, call results, subscripts
+  or conditional expressions. In particular you cannot write into tensors with `t[...] = ...` in Python:
+  use torch ops (`t.zero_()`, `t.copy_(x)`, `torch.empty(...)`) or `tl.store` inside the kernel.
+- The official benchmark verifies that `do_bench`, `torch.cuda.Event` (and `elapsed_time`/`record`),
+  `torch.cuda.synchronize` and the harness timer are untouched after your kernel is imported and run;
+  tampering fails the experiment.
 
 ## How an experiment is judged
 
