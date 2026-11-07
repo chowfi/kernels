@@ -1,0 +1,57 @@
+{
+ "utc": "2026-11-08T00:00:00+00:00",
+ "trials": 5,
+ "correct": true,
+ "ours_ms": {
+  "prefill_2048": 0.0970873786407767,
+  "prefill_4096": 0.22222222222222224,
+  "prefill_8192": 0.29126213592233013,
+  "prefill_16384": 0.4444444444444445,
+  "prefill_32768": 0.4854368932038835,
+  "decode_2048": 0.6666666666666667,
+  "decode_4096": 0.6796116504854369,
+  "decode_8192": 0.888888888888889,
+  "decode_16384": 0.8737864077669902,
+  "decode_32768": 1.1111111111111112,
+  "decode_65536": 1.0679611650485437
+ },
+ "fa2_ms": {
+  "prefill_2048": 0.1,
+  "prefill_4096": 0.2,
+  "prefill_8192": 0.30000000000000004,
+  "prefill_16384": 0.4,
+  "prefill_32768": 0.5,
+  "decode_2048": 0.6000000000000001,
+  "decode_4096": 0.7000000000000001,
+  "decode_8192": 0.8,
+  "decode_16384": 0.9,
+  "decode_32768": 1.0,
+  "decode_65536": 1.1
+ },
+ "sdpa_ms": {
+  "prefill_2048": 0.11000000000000001,
+  "prefill_4096": 0.22000000000000003,
+  "prefill_8192": 0.33000000000000007,
+  "prefill_16384": 0.44000000000000006,
+  "prefill_32768": 0.55,
+  "decode_2048": 0.6600000000000001,
+  "decode_4096": 0.7700000000000001,
+  "decode_8192": 0.8800000000000001,
+  "decode_16384": 0.9900000000000001,
+  "decode_32768": 1.1,
+  "decode_65536": 1.2100000000000002
+ },
+ "sdpa_backend": {
+  "prefill_2048": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "prefill_4096": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "prefill_8192": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "prefill_16384": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "prefill_32768": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "decode_2048": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "decode_4096": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "decode_8192": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "decode_16384": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "decode_32768": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+  "decode_65536": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)"
+ }
+}

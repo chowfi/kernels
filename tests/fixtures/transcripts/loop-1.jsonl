@@ -1,0 +1,5 @@
+{"type": "user", "timestamp": "2026-11-07T01:00:00Z"}
+{"type": "assistant", "timestamp": "2026-11-07T01:00:01Z", "message": {"id": "m1", "usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 10, "cache_creation_input_tokens": 2}}}
+{"type": "assistant", "timestamp": "2026-11-07T01:00:02Z", "message": {"id": "m1", "usage": {"input_tokens": 1, "output_tokens": 3, "cache_read_input_tokens": 10, "cache_creation_input_tokens": 2}}}
+{"type": "assistant", "timestamp": "2026-11-07T01:00:02Z", "message": {"id": "m1", "usage": {"input_tokens": 1, "output_tokens": 3, "cache_read_input_tokens": 10, "cache_creation_input_tokens": 2}}}
+{"type": "assistant", "timestamp": "2026-11-07T01:00:05Z", "message": {"id": "m2", "usage": {"input_tokens": 1, "output_tokens": 4, "cache_read_input_tokens": 10, "cache_creation_input_tokens": 2}}}

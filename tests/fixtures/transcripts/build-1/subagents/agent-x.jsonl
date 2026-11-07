@@ -1,0 +1,1 @@
+{"type": "assistant", "timestamp": "2026-11-06T12:00:00Z", "message": {"id": "m4", "usage": {"input_tokens": 1, "output_tokens": 3, "cache_read_input_tokens": 10, "cache_creation_input_tokens": 2}}}
