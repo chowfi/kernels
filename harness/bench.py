@@ -38,11 +38,11 @@ def _utc() -> str:
 
 def _time_all(kind: str, trials: int):
     med, sd = {}, {}
+    attn = load_kernel() if kind == "ours" else None
     for shape in BENCH_SHAPES:
         q, k, v = make_inputs(shape)
         c = shape.causal
         if kind == "ours":
-            attn = load_kernel()
             fn = lambda: attn(q, k, v, c)  # noqa: E731
         elif kind == "fa2":
             fn = lambda: fa2_attention(q, k, v, c)  # noqa: E731

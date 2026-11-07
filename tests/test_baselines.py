@@ -35,4 +35,5 @@ def test_fa2_matches_sdpa(shape):
 
 @pytest.mark.gpu
 def test_sdpa_backend_reported():
-    assert sdpa_backend_name(BENCH_SHAPES[0]) != ""
+    for sh in (BENCH_SHAPES[0], BENCH_SHAPES[-1]):
+        assert sdpa_backend_name(sh).startswith(("cudnn", "flash", "efficient", "math"))

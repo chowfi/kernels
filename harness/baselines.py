@@ -1,7 +1,6 @@
 """FA2 and SDPA reference attention implementations."""
 import torch
 import torch.nn.functional as F
-from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from harness.inputs import make_inputs, to_sdpa_layout
 from harness.shapes import Shape
@@ -21,23 +20,30 @@ def sdpa_attention(q, k, v, causal: bool):
     return F.scaled_dot_product_attention(q, k, v, is_causal=causal, enable_gqa=True)
 
 
-_PRIORITY = [
-    ("cudnn", SDPBackend.CUDNN_ATTENTION),
-    ("flash", SDPBackend.FLASH_ATTENTION),
-    ("efficient", SDPBackend.EFFICIENT_ATTENTION),
-    ("math", SDPBackend.MATH),
-]
+def _classify(name: str) -> str | None:
+    n = name.lower()
+    if "cudnn" in n:
+        return "cudnn"
+    if "flash" in n:
+        return "flash"
+    if "fmha_cutlass" in n or "efficient_attention" in n or "attention_kernel" in n:
+        return "efficient"
+    return None
 
 
 def sdpa_backend_name(shape: Shape) -> str:
-    """Probe one backend at a time in priority order; first that runs is what default dispatch ~picks."""
+    """Profile one default-dispatch SDPA call at the real shape; map launched kernel names to a backend."""
+    from torch.profiler import ProfilerActivity, profile
+
     q, k, v = (to_sdpa_layout(t) for t in make_inputs(shape))
-    for name, backend in _PRIORITY:
-        try:
-            with sdpa_kernel(backend):
-                sdpa_attention(q, k, v, shape.causal)
-            torch.cuda.synchronize()
-            return f"default (≈{name})"
-        except Exception:
-            continue
-    return "default (≈unknown)"
+    sdpa_attention(q, k, v, shape.causal)  # warm up (cudnn plan build, autotune)
+    torch.cuda.synchronize()
+    with profile(activities=[ProfilerActivity.CUDA]) as prof:
+        sdpa_attention(q, k, v, shape.causal)
+        torch.cuda.synchronize()
+    kernels = [e for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA]
+    for e in sorted(kernels, key=lambda e: -e.device_time_total):
+        b = _classify(e.name)
+        if b:
+            return f"{b} (kernel: {e.name[:60]})"
+    return "math (kernel: " + (kernels[0].name[:60] if kernels else "none") + ")"
