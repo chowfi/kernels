@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 NCU = os.environ.get("NCU_PATH") or shutil.which("ncu") or "/usr/local/cuda-12.8/bin/ncu"
-KERNEL_REGEX = "regex:_attn_fwd"
+NVTX_RANGE = "attn_profile"
 
 # (label, ncu metric). Order = print order. None of these are time metrics.
 METRICS = [
@@ -48,15 +48,20 @@ def _head_sha() -> str:
     return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
 
 
-def parse_ncu_csv(text: str) -> dict[str, tuple[str, str]]:
-    """Return {metric: (value, unit)} for the first profiled kernel in `--csv --page raw` output."""
+def parse_ncu_csv(text: str) -> list[tuple[str, dict[str, tuple[str, str]]]]:
+    """Return [(kernel_name, {metric: (value, unit)})] for each profiled kernel in `--csv --page raw` output."""
     i = text.find('"ID"')
     if i < 0:
-        return {}
+        return []
     rows = list(csv.reader(io.StringIO(text[i:])))
     if len(rows) < 3:
-        return {}
-    return {h: (v, u) for h, u, v in zip(rows[0], rows[1], rows[2])}
+        return []
+    h, units = rows[0], rows[1]
+    out = []
+    for r in rows[2:]:
+        m = {k: (v, u) for k, u, v in zip(h, units, r)}
+        out.append((m.get("Kernel Name", ("?", ""))[0], m))
+    return out
 
 
 def format_metrics(m: dict[str, tuple[str, str]]) -> list[str]:
@@ -82,8 +87,12 @@ def _target(shape_name: str, module_path: str) -> int:
     spec.loader.exec_module(mod)
     s = _all_shapes()[shape_name]
     q, k, v = make_inputs(s)
-    for _ in range(3):  # launch 0 compiles/warms; ncu skips it
+    for _ in range(2):  # compile/warm outside the profiled range
         mod.attention(q, k, v, s.causal)
+    torch.cuda.synchronize()
+    torch.cuda.nvtx.range_push(NVTX_RANGE)
+    mod.attention(q, k, v, s.causal)
+    torch.cuda.nvtx.range_pop()
     torch.cuda.synchronize()
     return 0
 
@@ -109,8 +118,11 @@ def main() -> int:
     header = f"Profile of HEAD kernel ({sha}) on {a.shape}"
     with tempfile.TemporaryDirectory() as tmp:
         mod_path = Path(tmp) / "head_attention.py"
-        mod_path.write_text(subprocess.check_output(["git", "show", "HEAD:kernel/attention.py"], cwd=ROOT, text=True))
-        cmd = [NCU, "--set", "full", "--kernel-name", KERNEL_REGEX, "--launch-skip", "1", "--launch-count", "1",
+        if a.module_path:  # test hook only; default is git HEAD
+            shutil.copy(a.module_path, mod_path)
+        else:
+            mod_path.write_text(subprocess.check_output(["git", "show", "HEAD:kernel/attention.py"], cwd=ROOT, text=True))
+        cmd = [NCU, "--set", "full", "--nvtx", "--nvtx-include", f"{NVTX_RANGE}/",
                "--csv", "--page", "raw", sys.executable, "-m", "harness.profile",
                "--_target", "--shape", a.shape, "--module-path", str(mod_path)]
         try:
@@ -129,7 +141,9 @@ def main() -> int:
             append_runs_log(f"harness.profile --shape {a.shape}", lines)
             return 1
         else:
-            lines = [header] + format_metrics(metrics)
+            lines = [header]
+            for n, (name, m) in enumerate(metrics):
+                lines += [f"kernel {n}: {name}"] + format_metrics(m)
     print("\n".join(lines))
     append_runs_log(f"harness.profile --shape {a.shape}", lines)
     return 0

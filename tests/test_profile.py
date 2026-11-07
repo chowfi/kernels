@@ -29,3 +29,34 @@ def test_profile_unknown_shape(tmp_path):
     out = _run("--shape", "nope", tmp_path=tmp_path)
     assert out.returncode == 2
     assert "decode_8192" in out.stdout + out.stderr
+
+
+_TWO_KERNELS = '''
+import torch, triton, triton.language as tl
+
+@triton.jit
+def weird_first_k(x, n, BLOCK: tl.constexpr):
+    o = tl.arange(0, BLOCK)
+    tl.store(x + o, tl.load(x + o, mask=o < n) + 1, mask=o < n)
+
+@triton.jit
+def weird_second_k(x, n, BLOCK: tl.constexpr):
+    o = tl.arange(0, BLOCK)
+    tl.store(x + o, tl.load(x + o, mask=o < n) * 2, mask=o < n)
+
+def attention(q, k, v, causal):
+    x = torch.zeros(128, device="cuda")
+    weird_first_k[(1,)](x, 128, BLOCK=128)
+    weird_second_k[(1,)](x, 128, BLOCK=128)
+    return q
+'''
+
+
+@pytest.mark.gpu
+def test_profile_covers_all_kernels_any_name(tmp_path):
+    mod = tmp_path / "fake_attn.py"
+    mod.write_text(_TWO_KERNELS)
+    out = _run("--shape", "decode_2048", "--module-path", str(mod), tmp_path=tmp_path)
+    assert out.returncode == 0, out.stderr
+    assert "weird_first_k" in out.stdout and "weird_second_k" in out.stdout
+    assert not re.search(r"\d\s*(ms|us|ns)\b", out.stdout)
