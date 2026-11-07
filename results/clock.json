@@ -5,10 +5,15 @@
       "start": 1794063271.674883,
       "end": 1794069426.82606,
       "reason": "driver_offline"
+    },
+    {
+      "start": 1794072461.4123263,
+      "end": 1794073860.000457,
+      "reason": "usage_limit"
     }
   ],
-  "paused_seconds": 6155.1511771678925,
-  "paused_since": 1794072461.4123263,
-  "paused_reason": "usage_limit",
-  "last_heartbeat": 1794072461.4123263
+  "paused_seconds": 7553.739307880402,
+  "paused_since": null,
+  "paused_reason": null,
+  "last_heartbeat": 1794073877.487438
 }

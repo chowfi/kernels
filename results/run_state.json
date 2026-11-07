@@ -14,12 +14,12 @@
     "prefill_4096": 0.47630400210618973,
     "prefill_8192": 1.9087200164794922
   },
-  "best_score": 1.3058607963645112,
+  "best_score": 1.3019823147619292,
   "consecutive_errors": 0,
   "harness_hash": "9a97d1c1f95051e55de77474be0685f8f980b4e8f6d31e3beccb38bbe364fa3a",
   "next_exp_id": 18,
-  "pause_reason": "usage_limit",
-  "pause_until": 1794073860.0000055,
+  "pause_reason": null,
+  "pause_until": null,
   "stop_reason": null,
   "threshold": 0.005
 }
