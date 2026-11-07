@@ -456,3 +456,86 @@ heldout_decode_5001 OK max_abs_err=0.0002437 tol=0.0006993 max_row_rel=0.00246 r
 heldout_prefill_4096_g8 OK max_abs_err=0.008038 tol=0.02192 max_row_rel=0.004684 rel_tol=0.008476
 heldout_decode_8192_g1 OK max_abs_err=0.0002389 tol=0.0005988 max_row_rel=0.002592 rel_tol=0.006644
 
+[2026-11-07T17:16:22+00:00] harness.profile --shape prefill_16384
+Profile of HEAD kernel (821a57f) on prefill_16384
+kernel 0: _kv_to_fp16
+  achieved occupancy (active warps, % of peak): 72.65
+  theoretical occupancy (%): 83.33
+  occupancy limit: registers (blocks/SM): 10
+  occupancy limit: shared mem (blocks/SM): 32
+  SM throughput (% of peak): 10.22
+  compute+memory throughput (% of peak): 73.46
+  DRAM throughput (% of peak): 73.46
+  L2 hit rate (%): 0.18
+  registers per thread: 48
+  shared memory per block, dynamic (bytes): 0
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 4,096
+  block size (threads): 128
+  waves per SM: 2.41
+kernel 1: _attn_fwd
+  achieved occupancy (active warps, % of peak): 16.66
+  theoretical occupancy (%): 16.67
+  occupancy limit: registers (blocks/SM): 1
+  occupancy limit: shared mem (blocks/SM): 1
+  SM throughput (% of peak): 74.57
+  compute+memory throughput (% of peak): 44.19
+  DRAM throughput (% of peak): 2.00
+  L2 hit rate (%): 98.09
+  registers per thread: 255
+  shared memory per block, dynamic (bytes): 65,536
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 4,096
+  block size (threads): 256
+  waves per SM: 24.09
+
+[2026-11-07T17:19:28+00:00] harness.profile --shape decode_8192
+Profile of HEAD kernel (821a57f) on decode_8192
+kernel 0: _attn_fwd_split
+  achieved occupancy (active warps, % of peak): 14.84
+  theoretical occupancy (%): 16.67
+  occupancy limit: registers (blocks/SM): 6
+  occupancy limit: shared mem (blocks/SM): 2
+  SM throughput (% of peak): 7.85
+  compute+memory throughput (% of peak): 65.19
+  DRAM throughput (% of peak): 65.19
+  L2 hit rate (%): 2.52
+  registers per thread: 78
+  shared memory per block, dynamic (bytes): 38,912
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 512
+  block size (threads): 128
+  waves per SM: 1.51
+kernel 1: _attn_combine
+  achieved occupancy (active warps, % of peak): 8.52
+  theoretical occupancy (%): 100
+  occupancy limit: registers (blocks/SM): 12
+  occupancy limit: shared mem (blocks/SM): 21
+  SM throughput (% of peak): 0.91
+  compute+memory throughput (% of peak): 9.24
+  DRAM throughput (% of peak): 9.24
+  L2 hit rate (%): 11.34
+  registers per thread: 40
+  shared memory per block, dynamic (bytes): 2,048
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 32
+  block size (threads): 128
+  waves per SM: 0.02
+
+[2026-11-07T17:24:18+00:00] harness.check
+prefill_2048 OK max_abs_err=0.007908 tol=0.02455 max_row_rel=0.003946 rel_tol=0.009181
+prefill_4096 OK max_abs_err=0.008132 tol=0.02291 max_row_rel=0.004691 rel_tol=0.009471
+prefill_8192 OK max_abs_err=0.008871 tol=0.02283 max_row_rel=0.005088 rel_tol=0.008965
+prefill_16384 OK max_abs_err=0.01018 tol=0.02565 max_row_rel=0.004979 rel_tol=0.009132
+prefill_32768 OK max_abs_err=0.008559 tol=0.02351 max_row_rel=0.006438 rel_tol=0.009963
+decode_2048 OK max_abs_err=0.0003651 tol=0.0007679 max_row_rel=0.002486 rel_tol=0.006673
+decode_4096 OK max_abs_err=0.0002751 tol=0.0007143 max_row_rel=0.002474 rel_tol=0.006502
+decode_8192 OK max_abs_err=0.0001886 tol=0.0004772 max_row_rel=0.002465 rel_tol=0.006462
+decode_16384 OK max_abs_err=0.0001296 tol=0.0003977 max_row_rel=0.002781 rel_tol=0.006364
+decode_32768 OK max_abs_err=9.647e-05 tol=0.0002929 max_row_rel=0.00258 rel_tol=0.006498
+decode_65536 OK max_abs_err=6.635e-05 tol=0.0002356 max_row_rel=0.002517 rel_tol=0.006246
+heldout_prefill_3000 OK max_abs_err=0.00841 tol=0.02453 max_row_rel=0.004029 rel_tol=0.009359
+heldout_decode_5001 OK max_abs_err=0.0002437 tol=0.0006993 max_row_rel=0.00246 rel_tol=0.006425
+heldout_prefill_4096_g8 OK max_abs_err=0.008038 tol=0.02192 max_row_rel=0.00495 rel_tol=0.008476
+heldout_decode_8192_g1 OK max_abs_err=0.0002389 tol=0.0005988 max_row_rel=0.002612 rel_tol=0.006644
+
