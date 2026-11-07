@@ -6,6 +6,7 @@ Usage: fake_bench.py (--ours|--baselines) --out PATH
   number -> correct run with ours_ms = 1/number on every shape (score == number)
   "fail" -> correctness failure (writes correct=false, exit 2)
   "crash" -> exit 1 with no output
+  "integrity" -> correct=false with a timing-integrity "error", exit 2
 An empty queue means score 1.0. Every call is appended to $FAKE_BENCH_QUEUE.calls.
 """
 import json
@@ -35,6 +36,10 @@ def main() -> int:
     qp.write_text(json.dumps(q))
     if item == "crash":
         return 1
+    if item == "integrity":
+        out.write_text(json.dumps({"utc": utc, "trials": 1, "correct": False,
+                                   "error": "timing integrity violated (after timing): torch.cuda.synchronize"}))
+        return 2
     if item == "fail":
         out.write_text(json.dumps({"utc": utc, "trials": 1, "correct": False, "correctness": []}))
         return 2

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 
@@ -62,11 +63,54 @@ BANNED_CALLS = {"setattr", "delattr", "open", "exec", "eval", "compile", "global
                 "locals", "__import__", "breakpoint", "input"}
 
 
+# Dunder attributes that expose or rebind object/module internals. Accessing them at all is
+# rejected (a kernel never needs them).
+BANNED_DUNDERS = {"__dict__", "__setattr__", "__delattr__", "__class__", "__builtins__",
+                  "__globals__", "__code__", "__closure__", "__subclasses__",
+                  "__getattribute__", "__mro__", "__bases__"}
+ASM_RE = re.compile(r"inline_asm|\basm\b", re.I)
+
+GUARD_RULES = """\
+Rules enforced by the driver on every experiment (any breach = status `violation`, all changes reverted):
+- You may change only kernel/attention.py, notes.md and experiments/current.json. Any other change
+  (including new untracked files anywhere, results/*.json, results.tsv, harness/, program.md) is a violation.
+  Do not commit, branch or otherwise move git HEAD.
+- kernel/attention.py may import only torch, triton, math and typing. No relative or star imports.
+- No inline PTX/assembly: nothing named inline_asm, no string mentioning asm, no CUDA/C++ extensions
+  (cpp_extension, load_inline, load_library, jiterator, ctypes).
+- No dynamic code or introspection: no exec, eval, compile, open, globals, vars, locals, __import__,
+  importlib, setattr, delattr; getattr/hasattr only with a literal attribute name.
+- Never modify imported modules: no assignment, augmented assignment or del on any attribute or item of
+  torch, triton, tl, math, typing (or anything bound from them, e.g. `ev = torch.cuda.Event`).
+  Attributes of your own objects (self.x, ctx.sm_scale, attention._cache) are fine.
+- No access to object internals: __dict__, __setattr__, __delattr__, __class__, __builtins__, __globals__,
+  __code__, __closure__, __subclasses__, __getattribute__, __mro__, __bases__.
+- The official benchmark also checks that do_bench, torch.cuda.Event (and elapsed_time/record),
+  torch.cuda.synchronize and the harness timer are untouched after importing and running your kernel;
+  tampering fails the experiment.
+"""
+
+
 def _root_name(node: ast.AST) -> str | None:
-    """Root Name of an attribute/subscript chain (`torch.cuda.Event.x` -> 'torch')."""
-    while isinstance(node, (ast.Attribute, ast.Subscript)):
-        node = node.value
+    """Root Name of an attribute/subscript chain (`torch.cuda.Event.x` -> 'torch');
+    `getattr(x, ...)` is treated as part of the chain of x."""
+    while True:
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            node = node.value
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+              and node.func.id == "getattr" and node.args):
+            node = node.args[0]
+        else:
+            break
     return node.id if isinstance(node, ast.Name) else None
+
+
+def _chain_has_dunder(node: ast.AST) -> bool:
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__") and node.attr.endswith("__"):
+            return True
+        node = node.value
+    return False
 
 
 def _targets(node: ast.AST) -> list[ast.AST]:
@@ -134,9 +178,10 @@ def kernel_violation(src: str) -> str | None:
                         changed = True
     for node in ast.walk(tree):
         for t in _targets(node):
-            # Any attribute (re)binding is rejected outright: a kernel has no need for it, and it
-            # is how timing functions would be monkeypatched (possibly through an alias).
-            if isinstance(t, ast.Attribute) or (isinstance(t, ast.Subscript) and _root_name(t) in modules):
+            # Writes into imported modules (or aliases of them) are how timing functions would be
+            # monkeypatched. Writes on locals/params/own functions (self.x, ctx.s) are fine.
+            if isinstance(t, (ast.Attribute, ast.Subscript)) and (
+                    _root_name(t) in modules or _chain_has_dunder(t)):
                 return (f"kernel/attention.py modifies module state "
                         f"({ast.unparse(t)}, line {getattr(t, 'lineno', '?')})")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -147,10 +192,13 @@ def kernel_violation(src: str) -> str | None:
                 if len(node.args) < 2 or not (isinstance(node.args[1], ast.Constant)
                                               and isinstance(node.args[1].value, str)):
                     return f"kernel/attention.py calls {f}() with a non-literal name (line {node.lineno})"
-                if "asm" in node.args[1].value.lower():
-                    return f"kernel/attention.py reaches {node.args[1].value!r} via {f}()"
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "asm" in node.value.lower():
-            return f"kernel/attention.py has a string literal containing 'asm' (line {node.lineno})"
+                name = node.args[1].value
+                if ASM_RE.search(name) or name in BANNED_DUNDERS:
+                    return f"kernel/attention.py reaches {name!r} via {f}()"
+        if isinstance(node, ast.Attribute) and node.attr in BANNED_DUNDERS:
+            return f"kernel/attention.py accesses {node.attr} (line {node.lineno})"
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and ASM_RE.search(node.value):
+            return f"kernel/attention.py has a string literal mentioning asm (line {node.lineno})"
     return None
 
 

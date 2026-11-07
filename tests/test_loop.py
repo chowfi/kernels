@@ -453,16 +453,53 @@ SEED_KERNEL = (REPO / "kernel" / "attention.py").read_text()
     "g = globals()\n",
     "v = vars(torch)\n",
     "s = 'asm'\n",
+    "s = 'ASM volatile'\n",
+    "s = 'tl.inline_' 'asm'\n",
     "ev = torch.cuda.Event\nev.elapsed_time = None\n",
     "tb = triton.testing\nd = tb.__dict__\nd['do_bench'] = None\n",
-    "class C:\n    pass\nC.x = 1\n",
+    "torch.cuda.__dict__.update({})\n",
+    "torch.cuda.__setattr__('x', 1)\n",
+    "c = torch.cuda\n(a, c.synchronize) = (1, 2)\n",
+    "from torch import cuda\ncuda.synchronize = None\n",
+    "from triton import testing as tt\ntt.do_bench = None\n",
+    "E = getattr(torch.cuda, 'Event')\nE.elapsed_time = None\n",
+    "for torch.x in range(2):\n    pass\n",
+    "def f(q):\n    q.__class__.x = 1\n",
+    "def f(q):\n    return q.__class__\n",
+    "g = attention.__globals__\n",
+    "f = getattr(tl, '__dict__')\n",
 ])
 def test_guard_rejects_tampering_patterns(snippet):
     from driver.guard import kernel_violation
     assert kernel_violation(SEED_KERNEL + "\n" + snippet) is not None
 
 
-def test_guard_accepts_seed_kernel_and_literal_getattr():
+@pytest.mark.parametrize("snippet", [
+    "f = getattr(tl, 'dot')\n",
+    "class _Attn(torch.autograd.Function):\n    @staticmethod\n    def forward(ctx, q, s):\n"
+    "        ctx.sm_scale = s\n        return q\n",
+    "class Holder:\n    def __init__(self):\n        self.x = 1\n",
+    "attention._cache = {}\n",
+    "class Cfg:\n    pass\nCfg.block = 64\n",
+    "msg = 'enthusiasm for plasma physics'\n",
+    "def g(cls):\n    cls.n += 1\n",
+])
+def test_guard_accepts_legit_code(snippet):
     from driver.guard import kernel_violation
     assert kernel_violation(SEED_KERNEL) is None
-    assert kernel_violation(SEED_KERNEL + "\nf = getattr(tl, 'dot')\n") is None
+    assert kernel_violation(SEED_KERNEL + "\n" + snippet) is None
+
+
+def test_guard_rules_text():
+    from driver.guard import GUARD_RULES
+    assert "kernel/attention.py" in GUARD_RULES and "inline_asm" in GUARD_RULES
+
+
+def test_integrity_error_surfaces_in_progress_log(loop_env):
+    q = list(SEED) + ["integrity"]
+    loop_env["queue"].write_text(json.dumps(q))
+    loop_env["monkeypatch"].setenv("FAKE_MODE", "improve")
+    t = loop_env["time"]
+    driver_loop.main(["--max-experiments", "1"], root=loop_env["root"], now=t.now, sleep=t.sleep)
+    assert last_row()["status"] == "failed_correctness"
+    assert "timing integrity violated" in (loop_env["root"] / "progress.log").read_text()

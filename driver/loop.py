@@ -197,6 +197,8 @@ class Loop:
         if not isinstance(data, dict):
             data = None
         if rc == 2 and data is not None and data.get("correct") is False:
+            if data.get("error"):  # e.g. "timing integrity violated (...): ..."
+                return "failed_correctness", data, str(data["error"])
             bad = [c.get("shape_name") for c in data.get("correctness", []) if not c.get("ok")]
             return "failed_correctness", data, f"correctness failed: {bad}"
         if rc != 0 or data is None:
