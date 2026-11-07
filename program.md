@@ -102,16 +102,20 @@ Guard rules enforced by `driver/guard.py` (a breach reverts the whole experiment
   `__globals__`, `__code__`, `__closure__`, `__subclasses__`, `__getattribute__`, `__mro__`, `__bases__`;
   no attribute or item write through any dunder attribute.
 - Attribute and item writes (`x.a = ...`, `x.a += ...`, `del x.a`, `x[i] = ...`, and loop/with targets
-  like `for x.a in ...`) are allowed ONLY when the leftmost name `x` is:
-  - `self`, `ctx` or `cls`; or
-  - a function or class defined in the file with `def`/`class` and never rebound anywhere
-    (no assignment, import, parameter, loop/with target of the same name), e.g. `attention._cache = {}`; or
-  - for item writes only (`x[k] = v`, `x[k][j] = v`, no attribute in between): a name bound exactly once,
-    by `x = {}` / `[]` / `{...}` / `dict()` / `list()` / `set()`, and never otherwise rebound,
-    e.g. `_CACHE = {}` then `_CACHE[key] = kernel`.
-  Everything else is rejected: writes through parameters, module names, aliases, call results, subscripts
-  or conditional expressions. In particular you cannot write into tensors with `t[...] = ...` in Python:
-  use torch ops (`t.zero_()`, `t.copy_(x)`, `torch.empty(...)`) or `tl.store` inside the kernel.
+  like `for x.a in ...`) are allowed ONLY in these forms:
+  - exactly one level under `self`, `ctx` or `cls` (`self.a = ...`, `ctx.sm_scale = ...`, `self[k] = ...`),
+    and only if that name is never bound in the file other than as the FIRST positional parameter of a
+    function (no `self = ...`, no `def f(q, self)`, no loop/with/except target or global of that name);
+  - exactly one level under a function or class defined in the file with `def`/`class` and never rebound
+    anywhere (no assignment, import, parameter, loop/with target of the same name),
+    e.g. `attention._cache = {}`;
+  - item writes (`x[k] = v`, `x[k][j] = v`, no attribute in between) on a name bound exactly once, by
+    `x = {}` / `[]` / `{...}` / `dict()` / `list()` / `set()`, and never otherwise rebound,
+    e.g. `_CACHE = {}` then `_CACHE[key] = kernel` (use this for caches, not `attention._cache[key]`).
+  Everything else is rejected: deeper chains (`self.m.x = ...`, `attention._cache[k] = ...`) and writes
+  through parameters, module names, aliases, call results, subscripts or conditional expressions. In
+  particular you cannot write into tensors with `t[...] = ...` in Python: use torch ops (`t.zero_()`,
+  `t.copy_(x)`, `torch.empty(...)`) or `tl.store` inside the kernel.
 - The official benchmark verifies that `do_bench`, `torch.cuda.Event` (and `elapsed_time`/`record`),
   `torch.cuda.synchronize` and the harness timer are untouched after your kernel is imported and run;
   tampering fails the experiment.

@@ -488,6 +488,15 @@ SEED_KERNEL = (REPO / "kernel" / "attention.py").read_text()
     "_C = {}\n_C = torch.cuda.__dict__\n_C['synchronize'] = None\n",
     "_C = {}\n_C[0] = torch.cuda\n_C[0].synchronize = None\n",
     "def f(q):\n    q[0] = 1\n",
+    # round 4: self/ctx/cls binding and one-level writes
+    "self = torch\nself.cuda.synchronize = None\n",
+    "def f():\n    self = torch\n    self.cuda.synchronize = None\n",
+    "cls = torch\ncls.cuda.synchronize = None\n",
+    "class H:\n    def __init__(self):\n        self.m = torch.cuda\n        self.m.synchronize = None\n",
+    "def a():\n    pass\na.m = torch.cuda\na.m.synchronize = None\n",
+    "def f(q, self):\n    self.x = 1\n",
+    "def f(ctx):\n    for ctx in (torch,):\n        ctx.x = 1\n",
+    "attention._cache = {}\nattention._cache['k'] = 1\n",
 ])
 def test_guard_rejects_tampering_patterns(snippet):
     from driver.guard import kernel_violation
@@ -505,7 +514,7 @@ def test_guard_rejects_tampering_patterns(snippet):
     "def g(cls):\n    cls.n += 1\n",
     "_CACHE = {}\ndef get(k, v):\n    _CACHE[k] = v\n    return _CACHE[k]\n",
     "def f(k):\n    seen = set()\n    memo = dict()\n    memo[k] = 1\n    return memo\n",
-    "attention._cache = {}\nattention._cache['k'] = 1\n",
+    "class H:\n    def put(self, k, v):\n        self[k] = v\n",
 ])
 def test_guard_accepts_legit_code(snippet):
     from driver.guard import kernel_violation

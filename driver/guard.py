@@ -87,16 +87,20 @@ Guard rules enforced by `driver/guard.py` (a breach reverts the whole experiment
   `__globals__`, `__code__`, `__closure__`, `__subclasses__`, `__getattribute__`, `__mro__`, `__bases__`;
   no attribute or item write through any dunder attribute.
 - Attribute and item writes (`x.a = ...`, `x.a += ...`, `del x.a`, `x[i] = ...`, and loop/with targets
-  like `for x.a in ...`) are allowed ONLY when the leftmost name `x` is:
-  - `self`, `ctx` or `cls`; or
-  - a function or class defined in the file with `def`/`class` and never rebound anywhere
-    (no assignment, import, parameter, loop/with target of the same name), e.g. `attention._cache = {}`; or
-  - for item writes only (`x[k] = v`, `x[k][j] = v`, no attribute in between): a name bound exactly once,
-    by `x = {}` / `[]` / `{...}` / `dict()` / `list()` / `set()`, and never otherwise rebound,
-    e.g. `_CACHE = {}` then `_CACHE[key] = kernel`.
-  Everything else is rejected: writes through parameters, module names, aliases, call results, subscripts
-  or conditional expressions. In particular you cannot write into tensors with `t[...] = ...` in Python:
-  use torch ops (`t.zero_()`, `t.copy_(x)`, `torch.empty(...)`) or `tl.store` inside the kernel.
+  like `for x.a in ...`) are allowed ONLY in these forms:
+  - exactly one level under `self`, `ctx` or `cls` (`self.a = ...`, `ctx.sm_scale = ...`, `self[k] = ...`),
+    and only if that name is never bound in the file other than as the FIRST positional parameter of a
+    function (no `self = ...`, no `def f(q, self)`, no loop/with/except target or global of that name);
+  - exactly one level under a function or class defined in the file with `def`/`class` and never rebound
+    anywhere (no assignment, import, parameter, loop/with target of the same name),
+    e.g. `attention._cache = {}`;
+  - item writes (`x[k] = v`, `x[k][j] = v`, no attribute in between) on a name bound exactly once, by
+    `x = {}` / `[]` / `{...}` / `dict()` / `list()` / `set()`, and never otherwise rebound,
+    e.g. `_CACHE = {}` then `_CACHE[key] = kernel` (use this for caches, not `attention._cache[key]`).
+  Everything else is rejected: deeper chains (`self.m.x = ...`, `attention._cache[k] = ...`) and writes
+  through parameters, module names, aliases, call results, subscripts or conditional expressions. In
+  particular you cannot write into tensors with `t[...] = ...` in Python: use torch ops (`t.zero_()`,
+  `t.copy_(x)`, `torch.empty(...)`) or `tl.store` inside the kernel.
 - The official benchmark verifies that `do_bench`, `torch.cuda.Event` (and `elapsed_time`/`record`),
   `torch.cuda.synchronize` and the harness timer are untouched after your kernel is imported and run;
   tampering fails the experiment.
@@ -153,8 +157,9 @@ def _is_container_literal(v: ast.AST | None) -> bool:
 
 
 def _bindings(tree: ast.AST) -> dict[str, list[str]]:
-    """Every way each name is bound in the file: 'def', 'container' (single-name assignment from a
-    container literal) or 'other' (assignment, import, parameter, loop/with/except target, ...)."""
+    """Every way each name is bound in the file: 'def', 'first_param' (first positional parameter
+    of a function), 'container' (single-name assignment from a container literal) or 'other'
+    (assignment, import, other parameter, loop/with/except/match target, global, ...)."""
     b: dict[str, list[str]] = {}
 
     def add(name: str, kind: str) -> None:
@@ -165,12 +170,16 @@ def _bindings(tree: ast.AST) -> dict[str, list[str]]:
             add(node.name, "def")
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             a = node.args
-            for arg in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg]:
+            positional = [*a.posonlyargs, *a.args]
+            for i, arg in enumerate([*positional, *a.kwonlyargs, a.vararg, a.kwarg]):
                 if arg is not None:
-                    add(arg.arg, "other")
+                    add(arg.arg, "first_param" if i == 0 and positional else "other")
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for al in node.names:
                 add(al.asname or al.name.split(".")[0], "other")
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for n in node.names:
+                add(n, "other")
         elif isinstance(node, ast.ExceptHandler) and node.name:
             add(node.name, "other")
         elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
@@ -212,6 +221,8 @@ def kernel_violation(src: str) -> str | None:
 
     b = _bindings(tree)
     def_roots = {n for n, kinds in b.items() if set(kinds) == {"def"}}
+    # self/ctx/cls are trusted only when every binding is as a function's first positional param.
+    self_roots = {n for n in WRITE_ROOT_NAMES if b.get(n) and set(b[n]) == {"first_param"}}
     container_ok = not (CONTAINER_CALLS & set(b))
     container_roots = {n for n, kinds in b.items() if kinds == ["container"]} if container_ok else set()
 
@@ -246,11 +257,13 @@ def kernel_violation(src: str) -> str | None:
                 return f"kernel/attention.py writes through a dunder attribute ({where})"
             root, links = _chain(t)
             ok = isinstance(root, ast.Name) and (
-                root.id in WRITE_ROOT_NAMES or root.id in def_roots
+                # exactly one link: `self.x = ...` / `attention._cache = ...`, never `self.m.x`
+                ((root.id in self_roots or root.id in def_roots) and len(links) == 1)
                 or (root.id in container_roots and all(isinstance(l, ast.Subscript) for l in links)))
             if not ok:
-                return (f"kernel/attention.py writes an attribute/item of something that is not "
-                        f"self/ctx/cls, an own def/class, or an own container literal ({where})")
+                return (f"kernel/attention.py writes an attribute/item that is not one level under "
+                        f"self/ctx/cls or an own def/class, nor an item of an own container literal "
+                        f"({where})")
     return None
 
 
