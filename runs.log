@@ -539,3 +539,36 @@ heldout_decode_5001 OK max_abs_err=0.0002437 tol=0.0006993 max_row_rel=0.00246 r
 heldout_prefill_4096_g8 OK max_abs_err=0.008038 tol=0.02192 max_row_rel=0.00495 rel_tol=0.008476
 heldout_decode_8192_g1 OK max_abs_err=0.0002389 tol=0.0005988 max_row_rel=0.002612 rel_tol=0.006644
 
+[2026-11-07T17:27:40+00:00] harness.profile --shape prefill_16384
+Profile of HEAD kernel (95dc87b) on prefill_16384
+kernel 0: _kv_to_fp16
+  achieved occupancy (active warps, % of peak): 72.85
+  theoretical occupancy (%): 83.33
+  occupancy limit: registers (blocks/SM): 10
+  occupancy limit: shared mem (blocks/SM): 32
+  SM throughput (% of peak): 10.04
+  compute+memory throughput (% of peak): 73.55
+  DRAM throughput (% of peak): 73.55
+  L2 hit rate (%): 0.18
+  registers per thread: 48
+  shared memory per block, dynamic (bytes): 0
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 4,096
+  block size (threads): 128
+  waves per SM: 2.41
+kernel 1: _attn_fwd
+  achieved occupancy (active warps, % of peak): 16.66
+  theoretical occupancy (%): 16.67
+  occupancy limit: registers (blocks/SM): 1
+  occupancy limit: shared mem (blocks/SM): 1
+  SM throughput (% of peak): 74.57
+  compute+memory throughput (% of peak): 44.19
+  DRAM throughput (% of peak): 2.00
+  L2 hit rate (%): 98.08
+  registers per thread: 255
+  shared memory per block, dynamic (bytes): 65,536
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 4,096
+  block size (threads): 256
+  waves per SM: 24.09
+

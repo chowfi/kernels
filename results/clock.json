@@ -8,7 +8,7 @@
     }
   ],
   "paused_seconds": 6155.1511771678925,
-  "paused_since": null,
-  "paused_reason": null,
-  "last_heartbeat": 1794072318.876262
+  "paused_since": 1794072461.4123263,
+  "paused_reason": "usage_limit",
+  "last_heartbeat": 1794072461.4123263
 }
