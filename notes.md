@@ -31,3 +31,9 @@ p = exp2(qk*qk_scale - m) -> one FFMA + ex2 per element); split kernel stores lo
 Motivation: HEAD prefill_8192 profile = BLOCK_M 128 w8, 223 regs, 1 block/SM (16.7% occ), SM throughput 37.6%, L2 hit 96%
 -> prefill is issue-limited in-CTA and is the weakest row group (~0.93x). Passed check. Next: reverse causal start_m order
 (heaviest blocks first, tail), configs that fit 2 blocks/SM (BLOCK_M 64 w4 with <=128 regs / <=50 KB smem), decode split sweep.
+
+Experiment 6: LPT launch order for causal prefill. _attn_fwd grid is now (H, num_m, B) (heads fastest) and causal maps
+start_m = num_m - 1 - pid1, so every head's heaviest m-blocks launch first and diagonal-only blocks fill the tail; GROUP
+q-heads sharing a KV head are adjacent CTAs streaming the same K/V in lockstep (L2 reuse). Aimed at prefill_2048/4096
+(~3-12 waves at 1 block/SM). Passed check. Next: 2-blocks/SM prefill configs, decode split sweep (BLOCK_N 128, stages 3-4,
+split target) for decode_32768 (~1.015x), persistent prefill grid if tail still matters.

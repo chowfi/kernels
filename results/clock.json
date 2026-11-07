@@ -1,8 +1,14 @@
 {
   "start": 1794062637.990075,
-  "pauses": [],
-  "paused_seconds": 0.0,
+  "pauses": [
+    {
+      "start": 1794063271.674883,
+      "end": 1794069426.82606,
+      "reason": "driver_offline"
+    }
+  ],
+  "paused_seconds": 6155.1511771678925,
   "paused_since": null,
   "paused_reason": null,
-  "last_heartbeat": 1794063271.6649647
+  "last_heartbeat": 1794069547.4433286
 }

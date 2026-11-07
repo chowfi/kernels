@@ -17,8 +17,13 @@ def _attn_fwd(
     HEAD_DIM: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
 ):
-    start_m = tl.program_id(0)
-    h = tl.program_id(1)
+    # grid (H, num_m_blocks, B): heads vary fastest. For causal, launch the
+    # heaviest m-blocks (longest KV prefix) first so cheap blocks fill the tail.
+    h = tl.program_id(0)
+    if CAUSAL:
+        start_m = tl.num_programs(1) - 1 - tl.program_id(1)
+    else:
+        start_m = tl.program_id(1)
     b = tl.program_id(2)
     kvh = h // GROUP
 
@@ -269,7 +274,7 @@ def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool) -
         if base_ctas < sm_count:
             return _attention_split(q, k, v, o, pack_m, block_n, base_ctas, sm_count)
     if Sq > 16:
-        grid = lambda meta: (triton.cdiv(Sq, meta["BLOCK_M"]), H, B)  # noqa: E731
+        grid = lambda meta: (H, triton.cdiv(Sq, meta["BLOCK_M"]), B)  # noqa: E731
         _attn_fwd_tuned[grid](
             q, k, v, o,
             q.stride(0), q.stride(1), q.stride(2),
@@ -280,7 +285,7 @@ def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool) -
             HEAD_DIM=D, CAUSAL=causal,
         )
         return o
-    grid = (triton.cdiv(Sq, block_m), H, B)
+    grid = (H, triton.cdiv(Sq, block_m), B)
     _attn_fwd[grid](
         q, k, v, o,
         q.stride(0), q.stride(1), q.stride(2),
