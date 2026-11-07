@@ -1,0 +1,364 @@
+"""End-to-end tests of driver.loop in a throwaway git repo.
+
+The loop runs in-process (driver.loop.main(argv, root=, now=, sleep=)) so time can be faked:
+FakeTime.now() = real time + offset, FakeTime.sleep(s) just adds s to the offset, so back-offs
+and usage-limit waits are instant but still show up as paused time in RunClock.
+Claude is tests/fake_claude.py (CLAUDE_BIN wrapper, FAKE_MODE); the bench is tests/fake_bench.py
+(HARNESS_BENCH_CMD, canned scores from a queue file; fake FA2 = 1.0 ms so score == queued value).
+The seed kernel benches at 0.5 (below FA2, so the all-shapes-beat-FA2 stop does not fire).
+"""
+import csv
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from driver import loop as driver_loop
+
+REPO = Path(__file__).resolve().parent.parent
+SEED = [0.5, 0.5, 0.5]
+
+
+class FakeTime:
+    def __init__(self):
+        self.offset = 0.0
+        self.slept = []
+
+    def now(self) -> float:
+        return time.time() + self.offset
+
+    def sleep(self, s: float) -> None:
+        self.slept.append(s)
+        self.offset += s
+
+
+def _git(root, *a):
+    return subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, text=True).stdout
+
+
+@pytest.fixture
+def loop_env(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    files = _git(REPO, "ls-files", "-co", "--exclude-standard").split("\n")
+    for f in filter(None, files):
+        src = REPO / f
+        if src.is_file():
+            (root / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, root / f)
+    for k, v in {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                 "GIT_COMMITTER_EMAIL": "t@t"}.items():
+        monkeypatch.setenv(k, v)
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "init")
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    wrapper = tmp_path / "claude"
+    wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} {REPO / 'tests' / 'fake_claude.py'} \"$@\"\n")
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("CLAUDE_BIN", str(wrapper))
+    monkeypatch.setenv("FAKE_STATE_DIR", str(state_dir))
+    queue = tmp_path / "bench_queue.json"
+    monkeypatch.setenv("FAKE_BENCH_QUEUE", str(queue))
+    monkeypatch.setenv("HARNESS_BENCH_CMD",
+                       f"{sys.executable} {REPO / 'tests' / 'fake_bench.py'} {{mode}} --out {{out}}")
+    env = {"root": root, "queue": queue, "time": FakeTime(), "monkeypatch": monkeypatch}
+    global _ENV
+    _ENV = env
+    return env
+
+
+_ENV: dict = {}
+
+
+def run(env, mode, bench_scores=(), bench_exit=None, bench_crash=False, max_exp=1,
+        agent_timeout_s=None, extra=()):
+    root = env["root"]
+    q = [] if (root / "results" / "run_state.json").exists() else list(SEED)
+    if bench_exit == 2:
+        q.append("fail")
+    elif bench_crash:
+        q.append("crash")
+    q += list(bench_scores)
+    env["queue"].write_text(json.dumps(q))
+    env["monkeypatch"].setenv("FAKE_MODE", mode)
+    argv = ["--max-experiments", str(max_exp), *extra]
+    if agent_timeout_s is not None:
+        argv += ["--agent-timeout-s", str(agent_timeout_s)]
+    t = env["time"]
+    return driver_loop.main(argv, root=root, now=t.now, sleep=t.sleep)
+
+
+def rows():
+    with open(_ENV["root"] / "results.tsv") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
+def last_row():
+    return rows()[-1]
+
+
+def exp_ids():
+    return [int(r["exp_id"]) for r in rows()]
+
+
+def clean_tree():
+    """No uncommitted changes except the driver's own live state files (run_state.json gets
+    best_commit/stop_reason after the last commit; clock.json gets heartbeats)."""
+    lines = _git(_ENV["root"], "status", "--porcelain", "-uall").splitlines()
+    return [l for l in lines if l[3:] not in {"results/run_state.json", "results/clock.json"}] == []
+
+
+def head_msg():
+    return _git(_ENV["root"], "log", "-1", "--format=%s").strip()
+
+
+def state():
+    r = _ENV["root"] / "results"
+    return {**json.loads((r / "run_state.json").read_text()),
+            **json.loads((r / "clock.json").read_text())}
+
+
+def dirty_kernel():
+    k = _ENV["root"] / "kernel" / "attention.py"
+    k.write_text(k.read_text() + "\n# half-finished edit from a killed run\n")
+
+
+def kernel_src():
+    return (_ENV["root"] / "kernel" / "attention.py").read_text()
+
+
+# ---------------------------------------------------------------- brief's tests
+
+def test_violation_resets(loop_env):
+    run(loop_env, "touch_harness")
+    assert last_row()["status"] == "violation"
+    assert clean_tree()
+    assert "tampered" not in (loop_env["root"] / "harness" / "score.py").read_text()
+
+
+def test_failed_correctness(loop_env):
+    run(loop_env, "break", bench_exit=2)
+    assert last_row()["status"] == "failed_correctness"
+    assert "1.01" not in kernel_src()
+    assert clean_tree()
+
+
+def test_kept_needs_two_wins(loop_env):
+    run(loop_env, "improve", bench_scores=[0.6, 0.5])
+    r = last_row()
+    assert r["status"] == "reverted"
+    assert "BLOCK_N=64," in kernel_src()
+    # notes survive a revert, committed in the log commit
+    assert "BLOCK_N=128" in (loop_env["root"] / "notes.md").read_text()
+    assert head_msg() == "exp 1 log (reverted)"
+    assert clean_tree()
+
+
+def test_kept(loop_env):
+    run(loop_env, "improve", bench_scores=[0.6, 0.6])
+    r = last_row()
+    assert r["status"] == "kept"
+    assert head_msg().startswith("exp 1:")
+    assert "(score 0.600)" in head_msg()
+    assert "BLOCK_N=128," in kernel_src()
+    assert float(r["best_score"]) == pytest.approx(0.6)
+    assert r["hypothesis"] == "larger KV tile BLOCK_N=128 for fewer loop iterations"
+    assert int(r["input_tokens"]) == 10 and int(r["cache_read_tokens"]) == 300
+    assert r["session_id"] == "fake-session-0001"
+    st = state()
+    assert st["best_score"] == pytest.approx(0.6) and st["next_exp_id"] == 2
+    assert st["best_commit"] == _git(loop_env["root"], "log", "-1", "--format=%H", "--grep=^exp 1:").strip()
+    assert clean_tree()
+
+
+def test_usage_limit_pauses(loop_env):
+    run(loop_env, "limit_once", bench_scores=[0.6, 0.6], max_exp=1)
+    st = state()
+    assert st["paused_seconds"] > 0
+    assert last_row()["status"] == "kept"
+    rs = rows()
+    assert [r["status"] for r in rs] == ["baseline", "usage_limit", "kept"]
+    assert [r["exp_id"] for r in rs] == ["0", "1", "1"]  # same exp_id retried
+    assert int(rs[1]["input_tokens"]) == 1  # limit row still carries its tokens
+    assert any(s >= 120 for s in loop_env["time"].slept) or sum(loop_env["time"].slept) >= 120
+
+
+def test_timeout(loop_env):
+    run(loop_env, "hang", agent_timeout_s=2)
+    assert last_row()["status"] == "timeout"
+    assert clean_tree()
+
+
+def test_bench_crash(loop_env):
+    run(loop_env, "improve", bench_crash=True)
+    assert last_row()["status"] == "crashed"
+    assert "BLOCK_N=64," in kernel_src()
+
+
+def test_resume_after_kill(loop_env):
+    run(loop_env, "improve", bench_scores=[0.6, 0.6])
+    dirty_kernel()
+    run(loop_env, "improve", bench_scores=[0.5, 0.5])
+    assert exp_ids() == [0, 1, 2]
+    assert "half-finished" not in kernel_src()
+    assert last_row()["status"] == "reverted"
+
+
+def test_three_errors_back_off(loop_env):
+    run(loop_env, "error", max_exp=3)
+    assert state()["paused_seconds"] > 0
+    assert [r["status"] for r in rows()] == ["baseline"] + ["agent_error"] * 3
+    assert state()["consecutive_errors"] == 0
+    assert loop_env["time"].slept and sum(loop_env["time"].slept) >= 290
+
+
+# ---------------------------------------------------------------- extra guardrail tests
+
+def test_untracked_file_is_violation_and_removed(loop_env):
+    run(loop_env, "untracked")
+    assert last_row()["status"] == "violation"
+    assert not (loop_env["root"] / "scratch").exists()
+    assert clean_tree()
+
+
+def test_tolerances_edit_is_violation(loop_env):
+    before = (loop_env["root"] / "results" / "tolerances.json").read_text()
+    run(loop_env, "touch_tolerances")
+    assert last_row()["status"] == "violation"
+    assert (loop_env["root"] / "results" / "tolerances.json").read_text() == before
+    assert "results/tolerances.json" in last_row()["hypothesis"]
+    assert clean_tree()
+
+
+def test_exp0_baseline_row_and_commit(loop_env):
+    run(loop_env, "error", max_exp=0)
+    rs = rows()
+    assert len(rs) == 1 and rs[0]["status"] == "baseline" and rs[0]["exp_id"] == "0"
+    assert float(rs[0]["score"]) == pytest.approx(0.5)
+    log = _git(loop_env["root"], "log", "--format=%s").split("\n")
+    assert "exp 0: baseline (score 0.500)" in log
+    st = state()
+    assert st["threshold"] == pytest.approx(0.005)
+    assert st["stop_reason"] == "max_experiments"
+
+
+def test_refuses_dirty_tree_when_fresh(loop_env):
+    (loop_env["root"] / "stray.txt").write_text("x")
+    with pytest.raises(SystemExit):
+        run(loop_env, "improve")
+    assert not (loop_env["root"] / "results.tsv").exists()
+
+
+def test_stop_when_all_shapes_beat_fa2(loop_env):
+    run(loop_env, "improve", bench_scores=[1.2, 1.2], max_exp=5)
+    assert exp_ids() == [0, 1]
+    assert state()["stop_reason"] == "beat_fa2_everywhere"
+
+
+def test_baseline_retime_after_3h(loop_env):
+    run(loop_env, "improve", bench_scores=[0.6, 0.6])
+    loop_env["time"].offset += 3.1 * 3600  # restart 3.1 h later (counted as offline pause)
+    calls = Path(str(loop_env["queue"]) + ".calls")
+    calls.write_text("")
+    run(loop_env, "improve", bench_scores=[0.6])
+    assert calls.read_text().split()[0] == "--baselines"
+    assert "drift" in (loop_env["root"] / "progress.log").read_text()
+
+
+def test_harness_change_aborts(loop_env):
+    run(loop_env, "improve", bench_scores=[0.6, 0.6])
+    p = loop_env["root"] / "harness" / "score.py"
+    p.write_text(p.read_text() + "\n# human edit\n")
+    _git(loop_env["root"], "commit", "-qam", "human edits harness")
+    with pytest.raises(SystemExit):
+        run(loop_env, "improve")
+    assert exp_ids() == [0, 1]
+
+
+def test_kill_mid_pause_stays_paused_on_restart(loop_env):
+    t = loop_env["time"]
+
+    def killing_sleep(s):
+        t.sleep(30)  # 30 s into the 3 min usage-limit wait, the driver is killed
+        raise KeyboardInterrupt
+
+    loop_env["monkeypatch"].setenv("FAKE_MODE", "limit_once")
+    loop_env["queue"].write_text(json.dumps(SEED))
+    with pytest.raises(KeyboardInterrupt):
+        driver_loop.main(["--max-experiments", "1"], root=loop_env["root"], now=t.now,
+                         sleep=killing_sleep)
+    assert state()["paused_since"] is not None and head_msg() == "exp 1 log (usage_limit)"
+    t.slept.clear()
+    run(loop_env, "limit_once", bench_scores=[0.6, 0.6])
+    assert 100 <= sum(t.slept) <= 160  # only the remaining ~150 s is waited out
+    assert state()["paused_seconds"] >= 170
+    assert [r["status"] for r in rows()] == ["baseline", "usage_limit", "kept"]
+
+
+# ---------------------------------------------------------------- real bench on the GPU
+
+@pytest.mark.gpu
+def test_one_real_experiment_gpu(loop_env, monkeypatch):
+    # Earlier GPU tests leave ~23 GB in this process's caching allocator; the bench subprocess
+    # then OOMs on prefill_32768. (The real driver process never touches CUDA.)
+    import gc
+
+    import torch
+    gc.collect()
+    torch.cuda.empty_cache()
+    monkeypatch.setenv("HARNESS_BENCH_CMD", f"{sys.executable} -m harness.bench {{mode}} --out {{out}}")
+    root = loop_env["root"]
+    run(loop_env, "improve")
+    rs = rows()
+    assert [r["exp_id"] for r in rs] == ["0", "1"]
+    assert rs[0]["status"] == "baseline" and float(rs[0]["score"]) > 0
+    assert rs[1]["status"] in {"kept", "reverted"}
+    assert float(rs[1]["score"]) > 0 and float(rs[1]["ms_prefill_2048"]) > 0
+    assert clean_tree()
+    out = REPO / ".superpowers" / "sdd" / "2026-11-06-gqa-flash-attn-autoresearch" / "task-8-gpu-results.tsv"
+    if out.parent.exists():
+        shutil.copy(root / "results.tsv", out)
+
+
+# ---------------------------------------------------------------- unit: guard / results
+
+def test_kernel_violation_rules():
+    from driver.guard import kernel_violation
+    ok = "import math\nimport torch\nimport triton\nimport triton.language as tl\nfrom typing import Any\n"
+    assert kernel_violation(ok) is None
+    assert "os" in kernel_violation(ok + "import os\n")
+    assert kernel_violation(ok + "from numpy import x\n")
+    assert kernel_violation(ok + "y = tl.inline_asm_elementwise('x')\n")
+    assert kernel_violation(ok + "torch.utils.cpp_extension.load_inline('a', 'b')\n")
+    assert kernel_violation(ok + "m = __import__('os')\n")
+
+
+def test_append_result_sanitizes(tmp_path):
+    from driver.results import RESULTS_COLUMNS, append_result, read_results
+    p = tmp_path / "r.tsv"
+    append_result(p, {"exp_id": 1, "status": "kept", "hypothesis": "a\tb\nc", "score": 1.23456789})
+    append_result(p, {"exp_id": 2, "status": "reverted"})
+    lines = p.read_text().splitlines()
+    assert lines[0].split("\t") == RESULTS_COLUMNS and len(lines) == 3
+    r = read_results(p)
+    assert r[0]["hypothesis"] == "a b c" and r[0]["score"] == "1.23457" and r[1]["score"] == ""
+    with pytest.raises(ValueError):
+        append_result(p, {"exp_id": 3, "status": "nope"})
+
+
+def test_changed_files_untracked_and_renames(loop_env):
+    from driver.guard import changed_files
+    root = loop_env["root"]
+    (root / "newdir").mkdir()
+    (root / "newdir" / "x.py").write_text("x")
+    _git(root, "mv", "README.md", "README2.md")
+    assert {"newdir/x.py", "README.md", "README2.md"} <= changed_files(root)
