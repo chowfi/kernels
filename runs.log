@@ -689,3 +689,53 @@ heldout_decode_5001 OK max_abs_err=0.0002437 tol=0.0006993 max_row_rel=0.00246 r
 heldout_prefill_4096_g8 OK max_abs_err=0.008038 tol=0.02192 max_row_rel=0.00495 rel_tol=0.008476
 heldout_decode_8192_g1 OK max_abs_err=0.0002389 tol=0.0005988 max_row_rel=0.002592 rel_tol=0.006644
 
+[2026-11-07T18:01:51+00:00] harness.profile --shape decode_32768
+Profile of HEAD kernel (d75a632) on decode_32768
+kernel 0: _attn_fwd_split
+  achieved occupancy (active warps, % of peak): 15.56
+  theoretical occupancy (%): 16.67
+  occupancy limit: registers (blocks/SM): 6
+  occupancy limit: shared mem (blocks/SM): 2
+  SM throughput (% of peak): 7.63
+  compute+memory throughput (% of peak): 74.33
+  DRAM throughput (% of peak): 74.33
+  L2 hit rate (%): 0.71
+  registers per thread: 78
+  shared memory per block, dynamic (bytes): 38,912
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 592
+  block size (threads): 128
+  waves per SM: 1.74
+kernel 1: _attn_combine
+  achieved occupancy (active warps, % of peak): 7.82
+  theoretical occupancy (%): 25
+  occupancy limit: registers (blocks/SM): 3
+  occupancy limit: shared mem (blocks/SM): 10
+  SM throughput (% of peak): 1.40
+  compute+memory throughput (% of peak): 15.25
+  DRAM throughput (% of peak): 15.25
+  L2 hit rate (%): 11.88
+  registers per thread: 150
+  shared memory per block, dynamic (bytes): 2,048
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 32
+  block size (threads): 128
+  waves per SM: 0.06
+
+[2026-11-07T18:09:36+00:00] harness.check
+prefill_2048 OK max_abs_err=0.007908 tol=0.02455 max_row_rel=0.003946 rel_tol=0.009181
+prefill_4096 OK max_abs_err=0.008132 tol=0.02291 max_row_rel=0.004691 rel_tol=0.009471
+prefill_8192 OK max_abs_err=0.008871 tol=0.02283 max_row_rel=0.005088 rel_tol=0.008965
+prefill_16384 OK max_abs_err=0.01018 tol=0.02565 max_row_rel=0.004979 rel_tol=0.009132
+prefill_32768 OK max_abs_err=0.008559 tol=0.02351 max_row_rel=0.006438 rel_tol=0.009963
+decode_2048 OK max_abs_err=0.0003651 tol=0.0007679 max_row_rel=0.002486 rel_tol=0.006673
+decode_4096 OK max_abs_err=0.0002751 tol=0.0007143 max_row_rel=0.002474 rel_tol=0.006502
+decode_8192 OK max_abs_err=0.0001886 tol=0.0004772 max_row_rel=0.00255 rel_tol=0.006462
+decode_16384 OK max_abs_err=0.0001296 tol=0.0003977 max_row_rel=0.002656 rel_tol=0.006364
+decode_32768 OK max_abs_err=0.0001477 tol=0.0002929 max_row_rel=0.002786 rel_tol=0.006498
+decode_65536 OK max_abs_err=7.638e-05 tol=0.0002356 max_row_rel=0.002474 rel_tol=0.006246
+heldout_prefill_3000 OK max_abs_err=0.00841 tol=0.02453 max_row_rel=0.004029 rel_tol=0.009359
+heldout_decode_5001 OK max_abs_err=0.0002437 tol=0.0006993 max_row_rel=0.00246 rel_tol=0.006425
+heldout_prefill_4096_g8 OK max_abs_err=0.008038 tol=0.02192 max_row_rel=0.00495 rel_tol=0.008476
+heldout_decode_8192_g1 OK max_abs_err=0.0002389 tol=0.0005988 max_row_rel=0.002592 rel_tol=0.006644
+
