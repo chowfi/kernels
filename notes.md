@@ -56,3 +56,9 @@ merges all splits for its rows as [COMB_ROWS, COMB_S, D] chunks (online log2 max
 Reasoning: prefill large-S is ~97% of est. mma.sync peak (~223 TFLOPS); decode carries 7-17 us fixed overhead, part of it the kernel
 boundary + 0.06-wave combine. Passed check (incl. g1/g8/odd held-outs). If neutral, retry exp 8's 1-wave sizing on top (fewer splits ->
 fewer combine chunks); if worse, the serial last-CTA combine (up to 3 chunk round trips) costs more than the launch gap it removes.
+
+Experiment 10: one-wave split sizing for all decode lengths. This is exp 8's balanced partition (split s = KV blocks [s*NB//S, (s+1)*NB//S),
+NUM_KV_BLOCKS arg) with num_splits = min(2*SMs // base_ctas, NB): the floor is 1 block per split instead of 2, so decode_2048 gets 32 splits
+(256 single-tile CTAs, not 128 two-tile ones) and decode_4096 gets 42 (336 CTAs, not 256). Exp 8 won the first run (1.1581) and missed the
+confirmation (1.1538 vs 1.1559). The idea is to keep its 16k-64k gain and add a lift on short decodes. Passed check. Next: decode grid with kvh
+fastest (whole 2 KB token rows streamed together for DRAM locality), a 3-blocks/SM split config with 1-wave sizing, then the prefill_2048 tail/prologue.
