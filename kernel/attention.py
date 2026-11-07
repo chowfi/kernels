@@ -57,10 +57,11 @@ def _attn_fwd(
             p = tl.math.exp2(qk * qk_scale - m_new[:, None])
             alpha = tl.math.exp2(m_i - m_new)
             l_i = l_i * alpha + tl.sum(p, 1)
-            acc = acc * alpha[:, None]
 
             v = tl.load(v_base + cur_n[:, None] * sv_s + offs_d[None, :])
-            acc += tl.dot(p.to(tl.bfloat16), v)
+            # fp16-accumulate mma (2x the fp32-acc rate on GeForce); tile sum folded into fp32 acc
+            pv = tl.dot(p.to(tl.float16), v.to(tl.float16), out_dtype=tl.float16)
+            acc = acc * alpha[:, None] + pv.to(tl.float32)
             m_i = m_new
         lo = full_hi
         hi = tl.minimum((start_m + 1) * BLOCK_M, SEQ_KV)
@@ -82,11 +83,11 @@ def _attn_fwd(
         p = tl.math.exp2(s - m_new[:, None])
         alpha = tl.math.exp2(m_i - m_new)
         l_i = l_i * alpha + tl.sum(p, 1)
-        acc = acc * alpha[:, None]
 
         v = tl.load(v_base + cur_n[:, None] * sv_s + offs_d[None, :],
                     mask=cur_n[:, None] < SEQ_KV, other=0.0)
-        acc += tl.dot(p.to(tl.bfloat16), v)
+        pv = tl.dot(p.to(tl.float16), v.to(tl.float16), out_dtype=tl.float16)
+        acc = acc * alpha[:, None] + pv.to(tl.float32)
         m_i = m_new
 
     acc = acc / l_i[:, None]

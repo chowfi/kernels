@@ -68,3 +68,9 @@ token range are adjacent. Their 256 B slices of each 2 KB [Hkv, D] token row are
 token and heads 5-7 came a wave later. Only the order changed, nothing else. Targets decode_32768/65536 (thinnest rows, DRAM-bound, 74% of peak). Passed check.
 Next: if this helps, add exp 8's one-wave sizing on top (min(2*SMs//base, NB//2), and keep the 2-block floor so decode_2048 does not regress as it did in exp 10).
 If it is neutral, DRAM order is not the limiter: try an unmasked inner loop in the split kernel, or 3 blocks/SM.
+
+Experiment 12: P.V uses FP16 accumulation in _attn_fwd (both loops). pv = tl.dot(p.to(fp16), v.to(fp16), out_dtype=fp16), then acc = acc*alpha + pv.to(fp32) as one fused rescale-add.
+Q.K^T, m_i/l_i and acc stay fp32. Why: prefill_32768 runs at 223 TFLOPS, which is the 5090's FP32-accumulate mma ceiling (209.5 spec, half the 419 FP16-acc rate). FA2 is capped there too.
+Passed check with margin: prefill max_row_rel ~0.0023 vs tol ~0.009, the same as before. fp16 P is finer than bf16 P. Caveat: fp16 V overflows if |v| > 65504.
+Next: if it wins, retune prefill tiles (lower reg/acc pressure may favour 128x128 or 2 blocks/SM), then try fp16-acc Q.K^T. That one is riskier: scores have a wider range, and q/k need a bf16->fp16 cast.
+If it is neutral or slower, Triton probably converted V before the smem stage (no cp.async pipelining). Try converting after the load instead, or keep bf16 V and change only P.
