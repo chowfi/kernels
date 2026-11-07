@@ -36,7 +36,31 @@ def _attn_fwd(
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
 
-    for start_n in range(0, SEQ_KV, BLOCK_N):
+    if CAUSAL:
+        # causal requires SEQ_Q == SEQ_KV. KV blocks entirely below the diagonal
+        # (cur_n < start_m*BLOCK_M <= every offs_m, and < SEQ_KV) need no mask.
+        full_hi = ((start_m * BLOCK_M) // BLOCK_N) * BLOCK_N
+        for start_n in range(0, full_hi, BLOCK_N):
+            cur_n = start_n + offs_n
+            k = tl.load(k_base + cur_n[None, :] * sk_s + offs_d[:, None])
+            s = tl.dot(q, k) * scale
+
+            m_new = tl.maximum(m_i, tl.max(s, 1))
+            p = tl.exp(s - m_new[:, None])
+            alpha = tl.exp(m_i - m_new)
+            l_i = l_i * alpha + tl.sum(p, 1)
+            acc = acc * alpha[:, None]
+
+            v = tl.load(v_base + cur_n[:, None] * sv_s + offs_d[None, :])
+            acc += tl.dot(p.to(tl.bfloat16), v)
+            m_i = m_new
+        lo = full_hi
+        hi = tl.minimum((start_m + 1) * BLOCK_M, SEQ_KV)
+    else:
+        lo = 0
+        hi = SEQ_KV
+
+    for start_n in range(lo, hi, BLOCK_N):
         cur_n = start_n + offs_n
         k = tl.load(k_base + cur_n[None, :] * sk_s + offs_d[:, None],
                     mask=cur_n[None, :] < SEQ_KV, other=0.0)
