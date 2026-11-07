@@ -48,14 +48,43 @@ def test_gate_rejects_wrong_dtype_shape_nan():
 
 
 @pytest.mark.gpu
-def test_tolerance_cached(tmp_path, monkeypatch):
-    monkeypatch.setattr(correctness, "TOL_PATH", tmp_path / "tolerances.json")
+def test_tolerance_not_written_by_check_and_builder_writes(tmp_path, monkeypatch):
+    path = tmp_path / "tolerances.json"
+    monkeypatch.setattr(correctness, "TOL_PATH", path)
     s = Shape("decode", 1, 2048)
     r1 = check_kernel(fa2_attention, [s])[0]
-    data = json.loads((tmp_path / "tolerances.json").read_text())
-    assert f"{s.name}|seed0" in data
+    assert r1.ok and not path.exists()
+    correctness.build_tolerances([s])
+    text = path.read_text()
+    assert text.endswith("\n")
+    entry = json.loads(text)[f"{s.name}|seed0"]
+    assert set(entry) == {"abs_tol", "rel_tol"}
     r2 = check_kernel(fa2_attention, [s])[0]
-    assert r1.tol == r2.tol > 1e-4
+    assert r2.tol == entry["abs_tol"] == r1.tol and r2.rel_tol == entry["rel_tol"]
+
+
+@pytest.mark.gpu
+def test_tolerance_validation_rejects_bad_entry(tmp_path, monkeypatch):
+    path = tmp_path / "tolerances.json"
+    s = Shape("decode", 1, 2048)
+    path.write_text(json.dumps({f"{s.name}|seed0": {"abs_tol": 0.5, "rel_tol": 0.01}}))
+    monkeypatch.setattr(correctness, "TOL_PATH", path)
+    r = check_kernel(fa2_attention, [s])[0]
+    assert not r.ok and "out of range" in r.error
+
+
+@pytest.mark.gpu
+def test_gate_rejects_late_row_corruption():
+    s = Shape("prefill", 4096, 4096, causal=True)
+    assert check_kernel(fa2_attention, [s])[0].ok
+
+    def late_zero(q, k, v, c):
+        o = fa2_attention(q, k, v, c).clone()
+        o[:, -64:] = 0
+        return o
+
+    r = check_kernel(late_zero, [s])[0]
+    assert not r.ok and r.max_row_rel > r.rel_tol
 
 
 @pytest.mark.gpu
