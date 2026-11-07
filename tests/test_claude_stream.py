@@ -276,3 +276,16 @@ def test_program_md_states_exact_allowed_commands():
             assert f"`{rule[5:].removesuffix(':*)')}" in text, rule
     assert "uv run python" not in text
     assert "--output" in text  # the denied git flag is mentioned
+
+
+def test_real_five_hour_limit_stream():
+    """Captured from smoke/run2 exp 1 (claude 2.1.319): rejected rate_limit_event + 429 result."""
+    o = parse_stream(open(FIX / "stream_limit_real.jsonl"))
+    assert o.status == "usage_limit" and o.reset_at == 1794025200
+    assert o.rate_limit["unifiedWindows"]["five_hour"]["utilization"] == 1
+
+
+@pytest.mark.parametrize("text", ["You've hit your 5-hour limit · resets 11:20pm (America/New_York)",
+                                  "You've hit your weekly limit · resets Nov 10"])
+def test_named_window_limit_texts_match_without_429(text):
+    assert parse_stream([_res(text)]).status == "usage_limit"

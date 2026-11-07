@@ -42,7 +42,7 @@ PERMISSION_MODE = "dontAsk"
 
 # "limit reached" alone is ambiguous: "context limit reached" / "context window limit reached" is a
 # prompt-size error, not a usage limit (M7).
-LIMIT_RE = re.compile(r"usage limit|rate limit|\b429\b|hit your (?:usage )?limit"
+LIMIT_RE = re.compile(r"usage limit|rate limit|\b429\b|hit your (?:[\w-]+ )?limit"
                       r"|(?<!context )(?<!window )limit reached", re.I)
 MAX_TEXT_RESET_S = 6 * 3600  # a reset parsed from text further away than this is not trusted (I3)
 
