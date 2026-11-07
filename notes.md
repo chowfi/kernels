@@ -79,3 +79,7 @@ Experiment 13: Q.K^T also uses FP16 accumulation in _attn_fwd (both loops). q is
 qk = tl.dot(q16, k16, out_dtype=fp16).to(fp32) comes out in the log2 domain (the per-element scale multiply is gone). Now both prefill mmas run at the 419 TFLOPS fp16-acc rate (ceiling ~21 ms at 32k vs ~31.5 before).
 Passed check, but the margin is thinner: prefill max_row_rel 0.0039-0.0064 vs tol ~0.009-0.010 (was ~0.0023). It grows with seq length, so do NOT stack more precision cuts on prefill (no fp16 m/l or acc).
 Next: if it wins, retune prefill tiles (128x128 w8, 2-blocks/SM configs), since mma is no longer the limiter and softmax/exp2 issue rate is. If it loses, the fp16->fp32 cvt of the scores costs more than the mma saving: keep exp 12 only.
+
+Experiment 14: prefill autotune sweep retuned for the fp16-acc kernel. I kept the 8 old configs and added 128x64 w8 s3 (96 KB smem), 128x32 w8 s3/s4, 128x128 w8 s1, 64x64 w4 s3 and 64x32 w4 s4.
+HEAD profile on prefill_16384: the winner is 128x64 w8 s2, with 255 regs (probably spilling), 64 KB smem, 1 block/SM, 16.7% occupancy and SM throughput 64%. Now that the mmas run at 2x, the bet is that more K/V stages in flight hide L2 latency. Passed check (prefill row_rel up to 0.0064 vs tol ~0.0099, unchanged).
+Next: if it is neutral, register pressure (255 regs at 128x64 w8) is the limiter, not latency. Try shrinking live state, e.g. reload q16 from smem each iteration instead of holding it in registers, or add a maxnreg hint on the 128-row configs. A persistent prefill grid is another option, for the 24-wave tail.
