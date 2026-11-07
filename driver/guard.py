@@ -57,7 +57,47 @@ def changed_files(root: Path) -> set[str]:
     return files
 
 
+# Builtins that can rebind/introspect module state or reach outside the kernel.
+BANNED_CALLS = {"setattr", "delattr", "open", "exec", "eval", "compile", "globals", "vars",
+                "locals", "__import__", "breakpoint", "input"}
+
+
+def _root_name(node: ast.AST) -> str | None:
+    """Root Name of an attribute/subscript chain (`torch.cuda.Event.x` -> 'torch')."""
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _targets(node: ast.AST) -> list[ast.AST]:
+    if isinstance(node, ast.Assign):
+        ts = node.targets
+    elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+        ts = [node.target]
+    elif isinstance(node, ast.Delete):
+        ts = node.targets
+    elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        ts = [node.target]
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        ts = [i.optional_vars for i in node.items if i.optional_vars is not None]
+    else:
+        return []
+    out: list[ast.AST] = []
+    stack = list(ts)
+    while stack:
+        t = stack.pop()
+        if isinstance(t, (ast.Tuple, ast.List)):
+            stack.extend(t.elts)
+        elif isinstance(t, ast.Starred):
+            stack.append(t.value)
+        else:
+            out.append(t)
+    return out
+
+
 def kernel_violation(src: str) -> str | None:
+    """Policy check for kernel/attention.py: allowed imports only, no native code, and nothing
+    that could rebind torch/triton/math/typing attributes (e.g. timing functions)."""
     for tok in BANNED_TOKENS:
         if tok in src:
             return f"kernel/attention.py contains banned token {tok!r}"
@@ -65,17 +105,52 @@ def kernel_violation(src: str) -> str | None:
         tree = ast.parse(src)
     except SyntaxError:
         return None  # not a policy breach; the bench will report it as crashed
+    modules: set[str] = set()  # every name bound by an import (modules and their aliases)
     for node in ast.walk(tree):
-        mods: list[str] = []
         if isinstance(node, ast.Import):
-            mods = [a.name for a in node.names]
+            for a in node.names:
+                if a.name.split(".")[0] not in ALLOWED_IMPORTS:
+                    return f"kernel/attention.py imports {a.name!r}"
+                modules.add(a.asname or a.name.split(".")[0])
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 return "kernel/attention.py uses a relative import"
-            mods = [node.module or ""]
-        for m in mods:
-            if m.split(".")[0] not in ALLOWED_IMPORTS:
-                return f"kernel/attention.py imports {m!r}"
+            if (node.module or "").split(".")[0] not in ALLOWED_IMPORTS:
+                return f"kernel/attention.py imports {node.module!r}"
+            for a in node.names:
+                if a.name == "*":
+                    return "kernel/attention.py uses a star import"
+                modules.add(a.asname or a.name)
+    # Names bound from module-rooted expressions are aliases too (`ev = torch.cuda.Event`).
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and node.value is not None \
+                    and _root_name(node.value) in modules:
+                for t in (_targets(node) if not isinstance(node, ast.NamedExpr) else [node.target]):
+                    if isinstance(t, ast.Name) and t.id not in modules:
+                        modules.add(t.id)
+                        changed = True
+    for node in ast.walk(tree):
+        for t in _targets(node):
+            # Any attribute (re)binding is rejected outright: a kernel has no need for it, and it
+            # is how timing functions would be monkeypatched (possibly through an alias).
+            if isinstance(t, ast.Attribute) or (isinstance(t, ast.Subscript) and _root_name(t) in modules):
+                return (f"kernel/attention.py modifies module state "
+                        f"({ast.unparse(t)}, line {getattr(t, 'lineno', '?')})")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            f = node.func.id
+            if f in BANNED_CALLS:
+                return f"kernel/attention.py calls {f}() (line {node.lineno})"
+            if f in ("getattr", "hasattr"):
+                if len(node.args) < 2 or not (isinstance(node.args[1], ast.Constant)
+                                              and isinstance(node.args[1].value, str)):
+                    return f"kernel/attention.py calls {f}() with a non-literal name (line {node.lineno})"
+                if "asm" in node.args[1].value.lower():
+                    return f"kernel/attention.py reaches {node.args[1].value!r} via {f}()"
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "asm" in node.value.lower():
+            return f"kernel/attention.py has a string literal containing 'asm' (line {node.lineno})"
     return None
 
 

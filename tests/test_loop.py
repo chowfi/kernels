@@ -82,7 +82,9 @@ _ENV: dict = {}
 def run(env, mode, bench_scores=(), bench_exit=None, bench_crash=False, max_exp=1,
         agent_timeout_s=None, extra=()):
     root = env["root"]
-    q = [] if (root / "results" / "run_state.json").exists() else list(SEED)
+    resumed = subprocess.run(["git", "cat-file", "-e", "HEAD:results/run_state.json"], cwd=root,
+                             capture_output=True).returncode == 0
+    q = [] if resumed else list(SEED)
     if bench_exit == 2:
         q.append("fail")
     elif bench_crash:
@@ -202,13 +204,18 @@ def test_bench_crash(loop_env):
     run(loop_env, "improve", bench_crash=True)
     assert last_row()["status"] == "crashed"
     assert "BLOCK_N=64," in kernel_src()
+    assert clean_tree()
 
 
 def test_resume_after_kill(loop_env):
     run(loop_env, "improve", bench_scores=[0.6, 0.6])
     dirty_kernel()
+    with open(loop_env["root"] / "runs.log", "a") as f:  # agent check output of the killed exp
+        f.write("[killed-exp] harness.check\nprefill_2048 OK\n")
     run(loop_env, "improve", bench_scores=[0.5, 0.5])
     assert exp_ids() == [0, 1, 2]
+    assert "[killed-exp]" in (loop_env["root"] / "runs.log").read_text()
+    assert "[killed-exp]" in _git(loop_env["root"], "show", "HEAD:runs.log")
     assert "half-finished" not in kernel_src()
     assert last_row()["status"] == "reverted"
 
@@ -304,6 +311,67 @@ def test_kill_mid_pause_stays_paused_on_restart(loop_env):
     assert [r["status"] for r in rows()] == ["baseline", "usage_limit", "kept"]
 
 
+def test_pause_clamped_to_wall_ceiling(loop_env):
+    loop_env["monkeypatch"].setenv("FAKE_RESET_IN", str(3 * 86400))
+    run(loop_env, "limit_once", bench_scores=[0.6, 0.6], max_exp=5, extra=["--wall-hours", "1"])
+    assert state()["stop_reason"] == "wall_hours"
+    assert sum(loop_env["time"].slept) <= 3600
+    assert [r["status"] for r in rows()] == ["baseline", "usage_limit"]
+
+
+def test_fresh_start_recovers_from_crashed_startup(loop_env):
+    root = loop_env["root"]
+    # a startup that died after timing baselines and writing state, before the exp 0 commit
+    (root / "results" / "baselines.json").write_text('{"partial": true}')
+    (root / "results" / "run_state.json").write_text("{}")
+    (root / "results" / "clock.json").write_text('{"start": 1}')
+    (root / "results.tsv").write_text("exp_id\n")
+    run(loop_env, "improve", bench_scores=[0.6, 0.6])
+    assert exp_ids() == [0, 1] and last_row()["status"] == "kept"
+    log = _git(root, "log", "--format=%s").split("\n")
+    assert "exp 0: baseline (score 0.500)" in log
+
+
+def test_fresh_start_still_refuses_other_dirty_files(loop_env):
+    root = loop_env["root"]
+    (root / "results" / "run_state.json").write_text("{}")
+    k = root / "kernel" / "attention.py"
+    k.write_text(k.read_text() + "# wip\n")
+    with pytest.raises(SystemExit):
+        run(loop_env, "improve")
+
+
+def test_sigterm_kills_agent_and_stops(loop_env, tmp_path):
+    import signal
+    pidf = tmp_path / "claude.pid"
+    loop_env["monkeypatch"].setenv("FAKE_PID_FILE", str(pidf))
+
+    def send_term(*_):
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    old = signal.signal(signal.SIGALRM, send_term)
+    signal.setitimer(signal.ITIMER_REAL, 1.5)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run(loop_env, "hang", agent_timeout_s=60)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL or callable(signal.getsignal(signal.SIGTERM))
+    pid = int(pidf.read_text())
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_driver_commits_skip_hooks(loop_env):
+    hook = loop_env["root"] / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    run(loop_env, "improve", bench_scores=[0.6, 0.6])
+    assert last_row()["status"] == "kept" and head_msg().startswith("exp 1:")
+
+
 # ---------------------------------------------------------------- real bench on the GPU
 
 @pytest.mark.gpu
@@ -362,3 +430,39 @@ def test_changed_files_untracked_and_renames(loop_env):
     (root / "newdir" / "x.py").write_text("x")
     _git(root, "mv", "README.md", "README2.md")
     assert {"newdir/x.py", "README.md", "README2.md"} <= changed_files(root)
+
+
+SEED_KERNEL = (REPO / "kernel" / "attention.py").read_text()
+
+
+@pytest.mark.parametrize("snippet", [
+    "torch.cuda.synchronize = lambda: None\n",
+    "tl.dot = None\n",
+    "triton.testing.do_bench = None\n",
+    "torch.cuda.Event.elapsed_time = None\n",
+    "math.pi += 1\n",
+    "del torch.cuda.synchronize\n",
+    "torch.__dict__['x'] = 1\n",
+    "f = getattr(tl, 'inline_' + 'as' + 'm_elementwise')\n",
+    "n = 'x'\nf = getattr(tl, n)\n",
+    "hasattr(tl, n)\n",
+    "setattr(torch, 'x', 1)\n",
+    "delattr(torch, 'x')\n",
+    "open('/tmp/x')\n",
+    "compile('1', 'x', 'eval')\n",
+    "g = globals()\n",
+    "v = vars(torch)\n",
+    "s = 'asm'\n",
+    "ev = torch.cuda.Event\nev.elapsed_time = None\n",
+    "tb = triton.testing\nd = tb.__dict__\nd['do_bench'] = None\n",
+    "class C:\n    pass\nC.x = 1\n",
+])
+def test_guard_rejects_tampering_patterns(snippet):
+    from driver.guard import kernel_violation
+    assert kernel_violation(SEED_KERNEL + "\n" + snippet) is not None
+
+
+def test_guard_accepts_seed_kernel_and_literal_getattr():
+    from driver.guard import kernel_violation
+    assert kernel_violation(SEED_KERNEL) is None
+    assert kernel_violation(SEED_KERNEL + "\nf = getattr(tl, 'dot')\n") is None

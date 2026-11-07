@@ -34,8 +34,19 @@ def load_kernel():
 
 
 def main() -> int:
+    from harness import integrity
     from harness.correctness import check_kernel
     from harness.shapes import BENCH_SHAPES, HELDOUT_SHAPES
+
+    snap = integrity.snapshot()
+
+    def integrity_fail(stage: str) -> bool:
+        bad = integrity.verify(snap)
+        if bad:
+            line = f"INTEGRITY FAIL ({stage}): kernel rebinds {', '.join(bad)}"
+            print(line)
+            append_runs_log("harness.check", [line])
+        return bool(bad)
 
     try:
         kernel = load_kernel()
@@ -44,7 +55,11 @@ def main() -> int:
         print(line)
         append_runs_log("harness.check", [line])
         return 1
+    if integrity_fail("after kernel import"):
+        return 1
     results = check_kernel(kernel, BENCH_SHAPES + HELDOUT_SHAPES)
+    if integrity_fail("after correctness"):
+        return 1
     lines = [format_result(r) for r in results]
     for l in lines:
         print(l)

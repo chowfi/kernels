@@ -24,6 +24,7 @@ import shlex
 import signal
 import statistics
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,7 +32,7 @@ from typing import Callable
 
 from driver.claude_stream import run_claude
 from driver.clock import RunClock
-from driver.guard import DRIVER_FILES, check_agent_changes, harness_hash, revert_to
+from driver.guard import DRIVER_FILES, changed_files, check_agent_changes, harness_hash, revert_to
 from driver.ledger import TokenLedger
 from driver.results import append_result, read_results
 from harness.score import is_improvement, min_ratio, noise_threshold, score
@@ -65,6 +66,14 @@ BENCH_DIR = "results/bench"  # gitignored
 
 def _iso_to_ts(s: str) -> float:
     return datetime.fromisoformat(s).timestamp()
+
+
+def _killpg(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    proc.wait()
 
 
 def _one_line(s: str, n: int = 120) -> str:
@@ -121,7 +130,7 @@ class Loop:
             self.git("add", "-A", "--", *add)
         if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=self.root).returncode == 0:
             return
-        self.git("commit", "-q", "-m", msg)
+        self.git("-c", "core.hooksPath=/dev/null", "commit", "--no-verify", "-q", "-m", msg)
 
     def state_paths(self) -> list[str]:
         return [RESULTS, RUN_STATE, CLOCK, TOKENS, RUNS_LOG]
@@ -174,12 +183,11 @@ class Loop:
             try:
                 rc = proc.wait(timeout=BENCH_TIMEOUT_S)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
-                proc.wait()
+                _killpg(proc)
                 return "crashed", None, f"bench timeout after {BENCH_TIMEOUT_S}s"
+            except BaseException:  # KeyboardInterrupt / SIGTERM: don't leave it on the GPU
+                _killpg(proc)
+                raise
         data = None
         if out.is_file():
             try:
@@ -213,20 +221,32 @@ class Loop:
         return data
 
     # ------------------------------------------------------------------ startup
+    def tracked_at_head(self, rel: str) -> bool:
+        return subprocess.run(["git", "cat-file", "-e", f"HEAD:{rel}"], cwd=self.root,
+                              capture_output=True).returncode == 0
+
     def startup(self) -> None:
-        if not self.p(RUN_STATE).exists():
+        # Exp 0's commit is the first to contain run_state.json; until then the run is fresh.
+        if not self.tracked_at_head(RUN_STATE):
             self.fresh_start()
         else:
             self.resume()
 
     def fresh_start(self) -> None:
-        dirty = sorted(l[3:] for l in self.git("status", "--porcelain", "-uall").splitlines())
-        if dirty == [CLOCK]:  # left behind by a startup that died before exp 0
-            self.p(CLOCK).unlink()
-            dirty = []
-        if dirty:
+        # Files a startup that died before the exp 0 commit may have left behind.
+        leftovers = {RESULTS, RUN_STATE, CLOCK, TOKENS, BASELINES}
+        dirty = sorted(changed_files(self.root))
+        other = [f for f in dirty if f not in leftovers]
+        if other:
             raise SystemExit("driver.loop: working tree is not clean; commit or stash first:\n  "
-                             + "\n  ".join(dirty))
+                             + "\n  ".join(other))
+        for rel in dirty:
+            if self.tracked_at_head(rel):
+                self.git("checkout", "-q", "HEAD", "--", rel)
+            else:
+                self.p(rel).unlink(missing_ok=True)
+        if dirty:
+            self.log(f"fresh start: discarded leftovers of an earlier startup: {', '.join(dirty)}")
         self.clock = RunClock(self.p(CLOCK), now=self.now)
         self.ledger = TokenLedger(self.p(TOKENS))
         self.clock.start()
@@ -266,8 +286,10 @@ class Loop:
 
     def resume(self) -> None:
         self.clock = RunClock(self.p(CLOCK), now=self.now)  # may record a driver_offline gap
-        # Back to the last checkpoint. Clock + ledger keep their bytes (real time / real spend).
-        saved = {rel: self.p(rel).read_bytes() for rel in (CLOCK, TOKENS) if self.p(rel).is_file()}
+        # Back to the last checkpoint. Clock + ledger keep their bytes (real time / real spend),
+        # runs.log keeps the killed experiment's harness.check output (committed with the next exp).
+        saved = {rel: self.p(rel).read_bytes() for rel in (CLOCK, TOKENS, RUNS_LOG)
+                 if self.p(rel).is_file()}
         revert_to(self.root, "HEAD")
         for rel, b in saved.items():
             self.p(rel).write_bytes(b)
@@ -290,16 +312,26 @@ class Loop:
         self.st["backoff_idx"] = i + 1
         return 60.0 * BACKOFF_MIN[min(i, len(BACKOFF_MIN) - 1)]
 
-    def begin_pause(self, reason: str, wait_s: float) -> None:
+    def wall_remaining(self) -> float:
+        return self.args.wall_hours * 3600 - self.clock.wall_seconds()
+
+    def begin_pause(self, reason: str, wait_s: float) -> float:
+        # Never wait past the hard wall-clock ceiling (small margin so the stop check fires).
+        wait_s = max(0.0, min(wait_s, self.wall_remaining() + 1e-3))
         self.st["pause_until"] = self.now() + wait_s
         self.st["pause_reason"] = reason
         self.clock.pause(reason)
+        return wait_s
 
     def wait_pause(self) -> None:
         until = self.st.get("pause_until") or self.now()
+        until = min(until, self.now() + max(0.0, self.wall_remaining()) + 1e-3)
         self.log(f"paused ({self.st.get('pause_reason')}) for {max(0, until - self.now()) / 60:.1f}"
                  f" min, until {datetime.fromtimestamp(until, timezone.utc).isoformat()}")
         while (rem := until - self.now()) > 0:
+            if self.wall_remaining() <= 0:
+                self.log("wall-clock ceiling reached during pause")
+                break
             self.sleep(min(rem, SLEEP_CHUNK_S))
         self.clock.resume()
         self.st["pause_until"] = None
@@ -355,6 +387,13 @@ class Loop:
         # best_commit) and clock.json are left modified; a restart resets to HEAD anyway.
 
     def run(self) -> int:
+        try:
+            return self._run()
+        except KeyboardInterrupt:
+            self.log("interrupted (SIGINT/SIGTERM); agent/bench killed; resume continues from HEAD")
+            raise
+
+    def _run(self) -> int:
         self.startup()
         while True:
             self.clock.heartbeat()
@@ -414,7 +453,7 @@ class Loop:
                 wait = out.reset_at + 60 - self.now()
             else:
                 wait = self.backoff_s()
-            self.begin_pause("usage_limit", wait)
+            wait = self.begin_pause("usage_limit", wait)
             self.finish(row, "usage_limit", f"{out.result_text[:200]!r}; waiting {wait / 60:.1f} min",
                         counted=False)
             self.wait_pause()
@@ -427,9 +466,9 @@ class Loop:
             if self.st["consecutive_errors"] >= MAX_CONSECUTIVE_ERRORS:
                 self.st["consecutive_errors"] = 0
                 wait = self.backoff_s()
-                self.begin_pause("agent_errors", wait)
+                wait = self.begin_pause("agent_errors", wait)
                 self.finish(row, "agent_error", f"{note}; {MAX_CONSECUTIVE_ERRORS} in a row, "
-                            f"backing off {wait / 60:.0f} min")
+                            f"backing off {wait / 60:.1f} min")
                 self.wait_pause()
                 return True
             return self.finish(row, "agent_error", note)
@@ -509,7 +548,18 @@ def main(argv: list[str] | None = None, root: Path | None = None,
          now: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep) -> int:
     args = parse_args(argv)
     root = Path(root) if root is not None else Path.cwd()
-    return Loop(root, args, now, sleep).run()
+
+    def _on_term(signum, frame):
+        raise KeyboardInterrupt(f"signal {signum}")
+
+    old = None
+    if threading.current_thread() is threading.main_thread():
+        old = signal.signal(signal.SIGTERM, _on_term)
+    try:
+        return Loop(root, args, now, sleep).run()
+    finally:
+        if old is not None:
+            signal.signal(signal.SIGTERM, old)
 
 
 if __name__ == "__main__":

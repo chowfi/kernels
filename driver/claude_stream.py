@@ -166,18 +166,28 @@ def run_claude(prompt: str, cwd: Path, timeout_s: int,
         th = threading.Thread(target=reader, daemon=True)
         th.start()
         timed_out = False
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                break
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    ln = q.get(timeout=min(remaining, 1.0))
+                except queue.Empty:
+                    continue
+                if ln is None:
+                    break
+                lines.append(ln)
+        except BaseException:
+            # KeyboardInterrupt / SIGTERM (driver raises KeyboardInterrupt): claude runs in its
+            # own session, so it would survive the driver unless we kill its group here.
+            _kill_group(proc)
             try:
-                ln = q.get(timeout=min(remaining, 1.0))
-            except queue.Empty:
-                continue
-            if ln is None:
-                break
-            lines.append(ln)
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            raise
         if timed_out:
             _kill_group(proc)
         try:

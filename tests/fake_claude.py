@@ -8,7 +8,8 @@ Behaviour is chosen by env FAKE_MODE:
   touch_tolerances edits results/tolerances.json (protected file)
   limit_once       usage-limit stream the first time (marker in $FAKE_STATE_DIR), then `improve`
   error            error result, exit 1
-  hang             sleeps forever
+  hang             sleeps forever (writes its pid to $FAKE_PID_FILE if set)
+FAKE_RESET_IN: seconds until the reset time reported by limit_once (default 120).
 The cwd is the repo root (run_claude sets it). Writes nothing outside the repo except the
 limit_once marker in FAKE_STATE_DIR.
 """
@@ -93,7 +94,8 @@ def main() -> int:
             improve()
         else:
             marker.write_text("1")
-            text = f"Claude AI usage limit reached|{int(time.time()) + 120}"
+            reset_in = int(os.environ.get("FAKE_RESET_IN", "120"))
+            text = f"Claude AI usage limit reached|{int(time.time()) + reset_in}"
             emit({"type": "system", "subtype": "init", "session_id": SID})
             emit({"type": "assistant", "session_id": SID,
                   "message": {"id": "msg_l", "content": [{"type": "text", "text": text}],
@@ -106,6 +108,8 @@ def main() -> int:
               "session_id": SID, "usage": usage(5, 1, 0, 0)})
         return 1
     elif mode == "hang":
+        if os.environ.get("FAKE_PID_FILE"):
+            Path(os.environ["FAKE_PID_FILE"]).write_text(str(os.getpid()))
         emit({"type": "system", "subtype": "init", "session_id": SID})
         while True:
             time.sleep(60)

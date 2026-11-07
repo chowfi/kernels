@@ -1,3 +1,4 @@
+import pytest
 import json
 import stat
 import sys
@@ -144,3 +145,27 @@ def test_ledger(tmp_path):
     assert led2.totals() == Usage(11, 22, 33, 44)
     assert led2.totals().total == 110
     assert led2.session_ids() == {"s1"}
+
+
+def test_run_claude_kills_child_on_keyboard_interrupt(tmp_path):
+    import os
+    import signal
+    import time
+    pidf = tmp_path / "pid"
+    b = _fake(tmp_path, f"import os, time\nopen({str(pidf)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
+
+    def boom(*_):
+        raise KeyboardInterrupt
+
+    old = signal.signal(signal.SIGALRM, boom)
+    signal.setitimer(signal.ITIMER_REAL, 1.0)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_claude("hi", tmp_path, 30, claude_bin=b)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+    pid = int(pidf.read_text())
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

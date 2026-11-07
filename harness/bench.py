@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 
+from harness import integrity
 from harness.baselines import fa2_attention, sdpa_attention, sdpa_backend_name
 from harness.check import load_kernel
 from harness.inputs import make_inputs, to_sdpa_layout
@@ -71,16 +72,31 @@ def main() -> int:
     ap.add_argument("--trials", type=int, default=5)
     a = ap.parse_args()
     out = {"utc": _utc(), "trials": a.trials}
+    snap = integrity.snapshot()  # before the kernel module is imported
+
+    def tampered(stage: str) -> bool:
+        bad = integrity.verify(snap)
+        if bad:
+            _write(a.out, {**out, "correct": False,
+                           "error": f"timing integrity violated ({stage}): {', '.join(bad)}"})
+        return bool(bad)
 
     if a.ours or a.all:
         from harness.correctness import check_kernel
 
-        corr = [asdict(r) for r in check_kernel(load_kernel(), BENCH_SHAPES + HELDOUT_SHAPES)]
+        kernel = load_kernel()
+        if tampered("after kernel import"):
+            return 2
+        corr = [asdict(r) for r in check_kernel(kernel, BENCH_SHAPES + HELDOUT_SHAPES)]
+        if tampered("after correctness"):
+            return 2
         if not all(c["ok"] for c in corr):
             _write(a.out, {**out, "correct": False, "correctness": corr})
             return 2
         out.update(correct=True, correctness=corr)
         out["ours_ms"], out["ours_stdev_ms"] = _time_all("ours", a.trials)
+        if tampered("after timing"):
+            return 2
     if a.baselines or a.all:
         out["fa2_ms"], out["fa2_stdev_ms"] = _time_all("fa2", a.trials)
         out["sdpa_ms"], out["sdpa_stdev_ms"] = _time_all("sdpa", a.trials)
