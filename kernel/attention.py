@@ -119,6 +119,31 @@ _attn_fwd_tuned = triton.autotune(
 
 
 @triton.jit
+def _kv_to_fp16(
+    K, V, K16, V16,
+    sk_b, sk_s, sk_h,
+    sv_b, sv_s, sv_h,
+    SEQ_KV, HKV, ROWS,
+    HEAD_DIM: tl.constexpr, BLOCK_R: tl.constexpr,
+):
+    # One streaming pass: bf16 K/V (any strides) -> contiguous fp16 [B, Skv, Hkv, D],
+    # so the prefill inner loop feeds fp16 tiles straight to the fp16-acc mma.
+    offs_r = tl.program_id(0) * BLOCK_R + tl.arange(0, BLOCK_R)
+    offs_d = tl.arange(0, HEAD_DIM)
+    r_mask = offs_r < ROWS
+    hk = offs_r % HKV
+    s = (offs_r // HKV) % SEQ_KV
+    b = offs_r // (HKV * SEQ_KV)
+    k = tl.load(K + (b * sk_b + s * sk_s + hk * sk_h)[:, None] + offs_d[None, :],
+                mask=r_mask[:, None], other=0.0)
+    v = tl.load(V + (b * sv_b + s * sv_s + hk * sv_h)[:, None] + offs_d[None, :],
+                mask=r_mask[:, None], other=0.0)
+    dst = offs_r[:, None] * HEAD_DIM + offs_d[None, :]
+    tl.store(K16 + dst, k.to(tl.float16), mask=r_mask[:, None])
+    tl.store(V16 + dst, v.to(tl.float16), mask=r_mask[:, None])
+
+
+@triton.jit
 def _attn_fwd_split(
     Q, K, V, MID_O, MID_LSE,
     sq_b, sq_s, sq_h,
@@ -278,12 +303,25 @@ def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool) -
         if base_ctas < sm_count:
             return _attention_split(q, k, v, o, pack_m, block_n, base_ctas, sm_count)
     if Sq > 16:
-        grid = lambda meta: (H, triton.cdiv(Sq, meta["BLOCK_M"]), B)  # noqa: E731
-        _attn_fwd_tuned[grid](
-            q, k, v, o,
-            q.stride(0), q.stride(1), q.stride(2),
+        # convert K/V to fp16 once instead of per tile in every CTA/warp
+        k16 = torch.empty((B, Skv, Hkv, D), device=k.device, dtype=torch.float16)
+        v16 = torch.empty((B, Skv, Hkv, D), device=v.device, dtype=torch.float16)
+        rows = B * Skv * Hkv
+        conv_r = 32
+        _kv_to_fp16[(triton.cdiv(rows, conv_r),)](
+            k, v, k16, v16,
             k.stride(0), k.stride(1), k.stride(2),
             v.stride(0), v.stride(1), v.stride(2),
+            Skv, Hkv, rows,
+            HEAD_DIM=D, BLOCK_R=conv_r,
+            num_warps=4,
+        )
+        grid = lambda meta: (H, triton.cdiv(Sq, meta["BLOCK_M"]), B)  # noqa: E731
+        _attn_fwd_tuned[grid](
+            q, k16, v16, o,
+            q.stride(0), q.stride(1), q.stride(2),
+            k16.stride(0), k16.stride(1), k16.stride(2),
+            v16.stride(0), v16.stride(1), v16.stride(2),
             o.stride(0), o.stride(1), o.stride(2),
             H, Sq, Skv, H // Hkv, 1.0 / math.sqrt(D),
             HEAD_DIM=D, CAUSAL=causal,
