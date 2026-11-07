@@ -49,3 +49,10 @@ blocks/SM of _attn_fwd_split, constant _SPLIT_BLOCKS_PER_SM) so the split grid i
 split s covers KV blocks [s*NB//S, (s+1)*NB//S) so the count is exact and splits differ by <= 1 block (CHUNK arg replaced by NUM_KV_BLOCKS).
 Motivation: decode_32768 profile 74% DRAM peak with a partial trailing wave. Passed check. If neutral, the tail is not the limiter: next try
 more bytes in flight per SM (3 blocks/SM via BLOCK_N 32 s3 + 1 wave sizing), unmasked inner loop in split, or a cheaper combine (150 regs).
+
+Experiment 9: single-kernel decode. _attn_fwd_split now fuses the combine: after storing its partial, each CTA does debug_barrier +
+acq_rel atomic_add on a per-(b, pid_mh) int32 counter (cached zeroed workspace, self-reset by the last CTA); the CTA seeing NUM_SPLITS-1
+merges all splits for its rows as [COMB_ROWS, COMB_S, D] chunks (online log2 max) and writes bf16 O. _attn_combine launch removed.
+Reasoning: prefill large-S is ~97% of est. mma.sync peak (~223 TFLOPS); decode carries 7-17 us fixed overhead, part of it the kernel
+boundary + 0.06-wave combine. Passed check (incl. g1/g8/odd held-outs). If neutral, retry exp 8's 1-wave sizing on top (fewer splits ->
+fewer combine chunks); if worse, the serial last-CTA combine (up to 3 chunk round trips) costs more than the launch gap it removes.
