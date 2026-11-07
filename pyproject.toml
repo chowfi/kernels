@@ -1,0 +1,24 @@
+[project]
+name = "kernels"
+version = "0.1.0"
+description = "Autoresearch loop for a Triton GQA flash-attention kernel on RTX 5090"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch",
+    "numpy",
+    "matplotlib",
+    "pytest",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = ["gpu: requires a CUDA GPU"]
