@@ -3,7 +3,7 @@
 A Triton forward-pass kernel for grouped-query attention (32 query heads, 8 KV heads, head_dim 128, bf16, batch 1),
 optimized on a single RTX 5090 by a Karpathy-style [autoresearch](https://github.com/karpathy/autoresearch) loop:
 headless Claude Code (`claude-opus-5-5`, effort `high`) proposes one idea per invocation, a driver measures it, and
-only verified improvements are kept. The loop ran for up to 12 active hours. Everything below the results table is
+only verified improvements are kept. The loop runs for up to 12 active hours. Everything below the results table is
 generated from the run's own logs.
 
 Workloads: prefill (causal, seq_q = seq_kv in 2048..32768) and decode (seq_q = 1, seq_kv in 2048..65536), 11 table
@@ -15,7 +15,7 @@ RTX 5090 (consumer Blackwell, `sm_120`), from `results/device.json`: 170 SMs, 96
 per block (101,376 bytes opt-in), 32 GB of memory.
 
 FA2 is the baseline because it is the strongest attention kernel that actually runs on this card: FlashAttention-3 is
-Hopper-only and FlashAttention-4 does not run on `sm_120`. FA2 here is `flash-attn==2.8.3.post2`, built from source for
+Hopper-only and FlashAttention-4 reportedly does not run on `sm_120` ([source](https://gist.github.com/solatticus/aab6ec3a0436748b021cbbdd12e8c739)). FA2 here is `flash-attn==2.8.3.post2`, built from source for
 `sm_120`.
 
 ## How the loop works
@@ -36,7 +36,7 @@ flowchart LR
 One experiment is one idea, one `claude -p` invocation, and one official benchmark run by the driver. The score is the
 geometric mean over the 11 table shapes of `fa2_ms / ours_ms`. Guardrails:
 
-- Locked harness: the harness and driver files are hashed at loop start; a change stops the loop.
+- Locked harness: `harness/**/*.py`, `program.md`, `pyproject.toml` and `uv.lock` are hashed at loop start and a change stops the loop; the driver files are protected separately by the per-experiment change check (`check_agent_changes`).
 - Tool allow-list under `dontAsk`: the agent can edit only `kernel/attention.py`, `notes.md` and `experiments/current.json`.
 - Correctness gate: every table shape plus 4 held-out shapes the agent never sees on the table (odd lengths, group size 8
   and 1), with a per-row relative-error check. Any failure disqualifies the experiment.

@@ -20,7 +20,7 @@ START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
 
 def _ratio(x: float) -> str:
     s = f"{x:.2f}×"
-    return f"**{s}**" if round(x, 2) >= 1.00 else s
+    return f"**{s}**" if x >= 1.0 else s
 
 
 def ratios(final: dict) -> list[tuple]:
@@ -71,6 +71,10 @@ def count_experiments(rows: list[dict]) -> dict:
             "best_score": float(scored[-1]["best_score"]) if scored else None}
 
 
+def _f3(x) -> str:
+    return "n/a" if x is None else f"{x:.3f}"
+
+
 def fmt_dur(s: float) -> str:
     m = int(round(s / 60))
     return f"{m // 60}h {m % 60:02d}m"
@@ -102,8 +106,7 @@ def render_accounting(counts: dict, loop: Usage, build: dict | None, active_s: f
          f"- Experiments: {counts['total']} total ({counts['kept']} kept, {counts['reverted']} reverted, "
          f"{counts['failed_correctness']} failed correctness, {counts['other']} other: crash/violation/timeout/agent error). "
          f"The seed (exp 0) and usage-limit pauses are not counted as experiments.",
-         f"- Score (geomean FA2 ms / ours ms): seed {counts['seed_score']:.3f}, final best {counts['best_score']:.3f}"
-         if counts["seed_score"] is not None and counts["best_score"] is not None else "- Score: n/a",
+         f"- Score (geomean FA2 ms / ours ms): seed {_f3(counts['seed_score'])}, final best {_f3(counts['best_score'])}",
          f"- Active time: {fmt_dur(active_s)}; wall time: {fmt_dur(wall_s)}; "
          f"{counts['usage_limit_pauses']} usage-limit pause(s), {fmt_dur(paused_s)} paused in total",
          f"- Stop reason: {stop_reason or 'n/a'}",
@@ -131,6 +134,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from-json", type=Path)
     ap.add_argument("--final-json", type=Path, default=Path("results/final.json"))
+    ap.add_argument("--bench-cmd", help="override the bench command (tests); --out PATH is appended")
     ap.add_argument("--readme", type=Path, default=Path("README.md"))
     ap.add_argument("--results-tsv", type=Path, default=Path("results.tsv"))
     ap.add_argument("--tokens-json", type=Path, default=Path("results/tokens.json"))
@@ -142,9 +146,12 @@ def main() -> int:
         final_path = a.from_json
     else:
         final_path = a.final_json
-        rc = subprocess.run(["uv", "run", "python", "-m", "harness.bench", "--all", "--out", str(final_path)]).returncode
-        if rc != 0 and not final_path.exists():
-            print("bench failed", file=sys.stderr)
+        final_path.unlink(missing_ok=True)  # never publish a stale file if the bench crashes
+        cmd = a.bench_cmd.split() if a.bench_cmd else ["uv", "run", "python", "-m", "harness.bench", "--all"]
+        rc = subprocess.run([*cmd, "--out", str(final_path)]).returncode
+        fresh = json.loads(final_path.read_text()) if final_path.exists() else None
+        if rc != 0 and not (fresh and fresh.get("correct") is False):
+            print(f"bench failed (exit {rc}); not publishing", file=sys.stderr)
             return rc or 1
     final = json.loads(final_path.read_text())
     if not final.get("correct"):

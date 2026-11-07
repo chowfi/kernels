@@ -110,3 +110,30 @@ def test_plot_progress(tmp_path):
                        capture_output=True, text=True, cwd=Path(__file__).parent.parent)
     assert r.returncode == 0, r.stderr
     assert out.stat().st_size > 5000
+
+
+def test_bold_uses_unrounded_ratio():
+    from scripts.final_report import _ratio
+    assert _ratio(0.996) == "1.00×" and _ratio(1.0) == "**1.00×**"
+
+
+def test_read_clock_open_pause_not_double_counted(tmp_path):
+    from scripts.final_report import read_clock
+    p = tmp_path / "clock.json"
+    # start 0, closed pause 600s, open pause since 5000, no heartbeat after
+    p.write_text(json.dumps({"start": 0.0, "pauses": [], "paused_seconds": 600.0, "paused_since": 5000.0,
+                             "paused_reason": "usage_limit", "last_heartbeat": 5000.0}))
+    active, wall, paused = read_clock(p)
+    assert (active, wall, paused) == (4400.0, 5000.0, 600.0)
+
+
+def test_final_report_bench_crash_does_not_publish_stale(tmp_path):
+    readme = tmp_path / "README.md"
+    orig = "<!-- RESULTS:START -->\nold\n<!-- RESULTS:END -->\n"
+    readme.write_text(orig)
+    stale = tmp_path / "final.json"
+    shutil.copy(FIX / "final_sample.json", stale)
+    r = subprocess.run([sys.executable, "-m", "scripts.final_report", "--final-json", str(stale),
+                        "--bench-cmd", "false", "--readme", str(readme)],
+                       capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+    assert r.returncode != 0 and readme.read_text() == orig and not stale.exists()
