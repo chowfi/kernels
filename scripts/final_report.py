@@ -140,7 +140,7 @@ def render_accounting(counts: dict, loop: Usage, build: dict | None, active_s: f
         L.append(f"- Build tokens (interactive sessions plus subagents that built the harness and driver, "
                  f"from local transcripts): {_tok(b)}; span {build['first_ts'][:16]}Z to {build['last_ts'][:16]}Z")
     else:
-        L.append("- Build tokens: run `uv run python -m scripts.token_report` first.")
+        L.append("- Build tokens: run `uv run --frozen python -m scripts.token_report` first.")
     return "\n".join(L)
 
 

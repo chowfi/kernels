@@ -42,13 +42,26 @@ geometric mean over the 11 table shapes of `fa2_ms / ours_ms`. Guardrails:
   and 1), with a per-row relative-error check. Any failure disqualifies the experiment.
 - No timing access: the agent can check correctness and profile, but official timing runs only in the driver.
 - Timing-integrity check: the benchmark snapshots and verifies that timing and baseline code were not tampered with.
-- Static kernel guard: no inline PTX/asm, no CUDA/C++ extensions, no banned builtins or writes outside the allow-list.
+- Static kernel guard: no inline PTX/asm, no CUDA/C++ extensions, no banned builtins or writes outside the allow-list,
+  and no way around Triton: torch attention/matmul/softmax ops, SDPA, `torch.ops`, FlashAttention, CUDA streams,
+  CUDA graphs and `data_ptr`-keyed caches are rejected.
+- Freshness and Triton-only checks in the official benchmark: after timing each shape, the benchmark refills the same
+  q/k/v tensors in place with new random data, calls the kernel once under `torch.profiler` and requires (a) a match
+  with a fresh fp32 reference and (b) that every CUDA kernel launched was launched through Triton (torch's own
+  fill/copy kernels from allocation are allowed). This rules out cached outputs and delegating to cuBLAS/FA/SDPA.
+- Idle GPU: before every official benchmark the driver kills its own leftover `harness.check`/`harness.profile`/`ncu`
+  processes and waits up to 60 s for any other compute app; if the GPU is still busy the experiment is recorded as
+  `crashed` ("gpu busy") rather than timed.
 - Two-run confirmation: an apparent win must beat the noise threshold and reproduce on a second run before it is kept.
+
+Active time is wall time minus pauses (usage limits, error back-off, driver offline). If the driver is killed and
+restarted, the time since its last heartbeat before the kill is counted as paused, so active time is slightly
+under-counted across restarts.
 
 ## Results
 
 <!-- RESULTS:START -->
-_Results pending: run `uv run python -m scripts.final_report` after the loop finishes._
+_Results pending: run `uv run --frozen python -m scripts.final_report` after the loop finishes._
 <!-- RESULTS:END -->
 
 ![Score per experiment](results/progress.png)
@@ -71,12 +84,13 @@ uv sync --no-install-package flash-attn
 FLASH_ATTN_CUDA_ARCHS=120 NVCC_THREADS=2 MAX_JOBS=6 CUDA_HOME=/usr/local/cuda-12.8 TORCH_CUDA_ARCH_LIST=12.0 \
   PATH=/usr/local/cuda-12.8/bin:$PATH uv pip install flash-attn==2.8.3.post2 --no-build-isolation
 
-uv run pytest                                   # CPU tests (GPU tests are marked `gpu`)
-./run_loop.sh                                   # the autoresearch loop
+uv run --frozen pytest                          # all tests (GPU tests are marked `gpu` and skip without CUDA)
+./run_loop.sh                                   # the autoresearch loop (status lines -> progress.log)
+nohup ./run_loop.sh > driver.out 2>&1 &         # unattended
 
-uv run python -m scripts.token_report           # -> results/token_report.json
-uv run python -m scripts.final_report           # fresh bench of all three kernels, rewrites the table above
-uv run python -m scripts.plot_progress          # -> results/progress.png
+uv run --frozen python -m scripts.token_report  # -> results/token_report.json
+uv run --frozen python -m scripts.final_report  # fresh bench of all three kernels, rewrites the table above
+uv run --frozen python -m scripts.plot_progress # -> results/progress.png
 ```
 
 `token_report` reads Claude Code transcripts from `~/.claude/projects/`, so it only reproduces on the machine that ran

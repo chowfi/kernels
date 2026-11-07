@@ -266,3 +266,13 @@ def test_run_claude_writes_stream_log(tmp_path):
     log = tmp_path / "logs" / "agent.jsonl"
     o = run_claude("hi", tmp_path, 30, claude_bin=b, stream_log=log)
     assert o.status == "ok" and log.read_text() == fx.read_text()
+
+
+def test_program_md_states_exact_allowed_commands():
+    """M3: program.md names the exact allowed commands (with --frozen), never a bare `uv run python`."""
+    text = (Path(__file__).resolve().parent.parent / "program.md").read_text()
+    for rule in AGENT_TOOLS:
+        if rule.startswith("Bash("):
+            assert f"`{rule[5:].removesuffix(':*)')}" in text, rule
+    assert "uv run python" not in text
+    assert "--output" in text  # the denied git flag is mentioned

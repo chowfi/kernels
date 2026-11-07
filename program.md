@@ -57,14 +57,14 @@ unrelated changes: if the score moves we must be able to say why.
 
 1. Read `results.tsv` (what was tried, statuses, scores), `notes.md`, and `git log --oneline -20`.
    Use `git show <commit>` or `git diff` to see what earlier kept kernels did.
-2. Optionally run `uv run python -m harness.profile --shape NAME` (for example `--shape prefill_8192`).
+2. Optionally run `uv run --frozen python -m harness.profile --shape NAME` (for example `--shape prefill_8192`).
    It profiles the LAST KEPT kernel (git HEAD), never your working copy, and prints occupancy,
    throughput and memory metrics (no durations).
 3. Write `experiments/current.json` BEFORE touching the kernel:
    `{"exp_id": <your experiment number>, "hypothesis": "...", "rationale": "...", "expected_effect": "..."}`
    Your experiment number is given in the prompt. Use the Write tool.
 4. Edit `kernel/attention.py` to implement the hypothesis.
-5. Run `uv run python -m harness.check` until it passes. It checks correctness on all 15 shapes
+5. Run `uv run --frozen python -m harness.check` until it passes. It checks correctness on all 15 shapes
    (the 11 table shapes plus 4 held-out shapes you cannot see or special-case: odd lengths and other
    GQA group sizes, so your kernel must be general) and prints no timing. A shape passes when both the
    max absolute error and the per-row relative error are within tolerances calibrated from bf16 rounding.
@@ -79,8 +79,11 @@ unrelated changes: if the score moves we must be able to say why.
 
 - You may edit ONLY `kernel/attention.py`, `notes.md` and `experiments/current.json`. Everything else is
   denied by permissions; a change to any other file is a violation.
-- Commands allowed: `uv run python -m harness.check`, `uv run python -m harness.profile --shape NAME`,
-  `git log`, `git diff`, `git show`. Everything else is denied.
+- Commands allowed, exactly as written (one command per Bash call; no pipes, redirects, `cd`, `&&` or
+  environment prefixes): `uv run --frozen python -m harness.check`,
+  `uv run --frozen python -m harness.profile --shape NAME`, and read-only `git log ...`, `git diff ...`,
+  `git show ...` (the `--output` option is denied). Everything else is denied. Never run `uv sync` or
+  `uv run` without `--frozen`. The harness prints nothing your kernel prints.
 - You cannot benchmark and must not try to time anything. Decide from reasoning, profile output
   and the history.
 - No hard-coding per benchmark shape (no "if seq == 8192" special values tuned to the table). Shape-keyed
@@ -143,9 +146,10 @@ Guard rules enforced by `driver/guard.py` (a breach reverts the whole experiment
 
 ## How an experiment is judged
 
-The driver benchmarks the kernel on the 11 table shapes twice back to back. It keeps the change only if
-the whole-table geomean of `fa2_ms / ours_ms` beats the best so far by more than a noise threshold
-(at least 0.5%) on both runs. Otherwise it reverts. So a clear win on some shapes that costs others is
+The driver benchmarks the kernel once on the 11 table shapes. If that run does not beat the best so far
+by more than a noise threshold (at least 0.5%) on the whole-table geomean of `fa2_ms / ours_ms`, it
+reverts. Only on an apparent win does it run the benchmark a second time, and it keeps the change only
+if the second run also beats the threshold. So a clear win on some shapes that costs others is
 judged on the total; consider whether your idea helps the geomean, not one row.
 
 ## Research strategy seed
