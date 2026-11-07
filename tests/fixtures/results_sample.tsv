@@ -1,10 +1,12 @@
-exp_id	utc	hypothesis	status	score	best_score	min_vs_fa2	input_tokens	output_tokens	cache_read_tokens	cache_write_tokens	agent_seconds	session_id	commit
-0	t	h0	baseline	0.27	0.27		0	0	0	0	1		
-1	t	h1	kept	0.7	0.7		0	0	0	0	1		
-2	t	h2	reverted	0.6	0.7		0	0	0	0	1		
-3	t	h3	failed_correctness		0.7		0	0	0	0	1		
-4	t	h4	usage_limit		0.7		0	0	0	0	1		
-5	t	h5	kept	0.9	0.9		0	0	0	0	1		
-6	t	h6	timeout		0.9		0	0	0	0	1		
-7	t	h7	crashed		0.9		0	0	0	0	1		
-8	t	h8	reverted	0.8	0.9		0	0	0	0	1		
+exp_id	utc	hypothesis	status	score	best_score	min_vs_fa2	output_tokens	active_s	wall_s
+0	t	h0	baseline	0.27	0.27		0	0	10
+1	t	h1	kept	0.7	0.7		500	600	700
+2	t	h2	reverted	0.6	0.7		400	1200	1400
+3	t	h3	failed_correctness		0.7		300	1800	2100
+4	t	usage limit hit	usage_limit		0.7		0	1900	5000
+4	t	(none recorded)	agent_error		0.7		0	1950	5100
+4	t	h4 tried something	agent_error		0.7		120	2400	5600
+5	t	h5	kept	0.9	0.9		800	3600	7200
+6	t	h6	timeout		0.9		900	4800	8400
+7	t	h7	crashed		0.9		100	5400	9000
+8	t	h8	reverted	0.8	0.9		700	6000	9600

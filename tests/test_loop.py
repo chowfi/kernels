@@ -70,7 +70,12 @@ def loop_env(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_BENCH_QUEUE", str(queue))
     monkeypatch.setenv("HARNESS_BENCH_CMD",
                        f"{sys.executable} {REPO / 'tests' / 'fake_bench.py'} {{mode}} --out {{out}}")
-    env = {"root": root, "queue": queue, "time": FakeTime(), "monkeypatch": monkeypatch}
+    gpu_apps = tmp_path / "gpu_apps.txt"  # lines "pid, name" served by the fake nvidia-smi query
+    gpu_apps.write_text("")
+    monkeypatch.setenv("FAKE_GPU_APPS", str(gpu_apps))
+    monkeypatch.setenv("HARNESS_GPU_QUERY_CMD", f"{sys.executable} {REPO / 'tests' / 'fake_gpu_query.py'}")
+    env = {"root": root, "queue": queue, "time": FakeTime(), "monkeypatch": monkeypatch,
+           "gpu_apps": gpu_apps}
     global _ENV
     _ENV = env
     return env
@@ -541,3 +546,101 @@ def test_integrity_error_surfaces_in_progress_log(loop_env):
     driver_loop.main(["--max-experiments", "1"], root=loop_env["root"], now=t.now, sleep=t.sleep)
     assert last_row()["status"] == "failed_correctness"
     assert "timing integrity violated" in (loop_env["root"] / "progress.log").read_text()
+
+
+# ---------------------------------------------------------------- final review fixes
+
+def notes_text():
+    return (_ENV["root"] / "notes.md").read_text()
+
+
+def test_agent_error_without_work_is_not_an_experiment(loop_env):
+    """I4: an agent_error with no hypothesis and zero output tokens is retried, not counted."""
+    run(loop_env, "error_silent_once", bench_scores=[0.6, 0.6], max_exp=1)
+    rs = rows()
+    assert [r["status"] for r in rs] == ["baseline", "agent_error", "kept"]
+    assert [r["exp_id"] for r in rs] == ["0", "1", "1"]
+    assert rs[1]["hypothesis"] == "(none recorded)" and rs[1]["output_tokens"] == "0"
+    assert state()["next_exp_id"] == 2
+
+
+def test_agent_error_with_work_still_counts(loop_env):
+    run(loop_env, "error", max_exp=1)
+    assert [r["status"] for r in rows()] == ["baseline", "agent_error"]
+    assert state()["next_exp_id"] == 2
+
+
+@pytest.mark.parametrize("mode,kw,status,line", [
+    ("notes_hang", {"agent_timeout_s": 2}, "timeout", "- timeout-run note"),
+    ("error", {}, "agent_error", "- error-run note"),
+    ("touch_harness", {}, "violation", "- violation attempt note"),
+])
+def test_notes_kept_on_timeout_error_violation(loop_env, mode, kw, status, line):
+    """M4: the agent's notes.md lines survive timeout / agent_error / violation reverts."""
+    run(loop_env, mode, **kw)
+    assert last_row()["status"] == status
+    assert line in notes_text()
+    assert line in _git(loop_env["root"], "show", "HEAD:notes.md")
+    assert clean_tree()
+
+
+def test_rows_record_active_and_wall_seconds(loop_env):
+    """M8: every row carries active_s / wall_s at append time."""
+    run(loop_env, "improve", bench_scores=[0.6, 0.6])
+    for r in rows():
+        assert float(r["active_s"]) >= 0 and float(r["wall_s"]) >= float(r["active_s"])
+
+
+def test_progress_log_written_once_per_line(loop_env):
+    """I6: the driver is the only writer of progress.log (run_loop.sh no longer tees into it)."""
+    script = (REPO / "run_loop.sh").read_text()
+    assert "tee" not in script and "exec uv run --frozen python -m driver.loop" in script
+    run(loop_env, "improve", bench_scores=[0.6, 0.6])
+    lines = (loop_env["root"] / "progress.log").read_text().splitlines()
+    assert len(lines) == len(set(lines))
+
+
+def test_bench_commands_use_frozen():
+    """M3: never let uv re-sync (flash-attn is built from source)."""
+    from scripts import final_report
+    assert driver_loop.DEFAULT_BENCH_CMD.startswith("uv run --frozen python -m harness.bench")
+    assert final_report.DEFAULT_BENCH_CMD[:4] == ["uv", "run", "--frozen", "python"]
+
+
+def _spawn(*argv):
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)", *argv],
+                            start_new_session=True)
+
+
+def test_stray_agent_gpu_process_is_killed_before_bench(loop_env):
+    """I5: a leftover harness.check from the agent is killed before the official bench."""
+    stray = _spawn("-m", "harness.check")
+    try:
+        loop_env["gpu_apps"].write_text(f"{stray.pid}, python\n")
+        run(loop_env, "improve", bench_scores=[0.6, 0.6])
+        assert stray.wait(timeout=10) != 0
+        assert last_row()["status"] == "kept"
+        log = (loop_env["root"] / "progress.log").read_text()
+        assert f"killed stray GPU process {stray.pid}" in log
+    finally:
+        stray.kill()
+
+
+def test_foreign_gpu_process_makes_bench_crash_gpu_busy(loop_env):
+    """I5: another compute app that does not go away within 60 s -> crashed, 'gpu busy', no timing."""
+    other = _spawn("--some-other-job")
+    try:
+        run(loop_env, "error", max_exp=0)  # fresh start (benches run with an idle GPU)
+        loop_env["gpu_apps"].write_text(f"{other.pid}, python\n")
+        calls = Path(str(loop_env["queue"]) + ".calls")
+        calls.write_text("")
+        run(loop_env, "improve", max_exp=1)
+        assert other.poll() is None  # not ours to kill
+        r = last_row()
+        assert r["status"] == "crashed" and r["score"] == ""
+        assert "--ours" not in calls.read_text()
+        log = (loop_env["root"] / "progress.log").read_text()
+        assert "gpu busy" in log
+        assert sum(loop_env["time"].slept) >= 60
+    finally:
+        other.kill()

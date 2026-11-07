@@ -34,7 +34,7 @@ from driver.claude_stream import run_claude
 from driver.clock import RunClock
 from driver.guard import DRIVER_FILES, changed_files, check_agent_changes, harness_hash, revert_to
 from driver.ledger import TokenLedger
-from driver.results import append_result, read_results
+from driver.results import NO_HYPOTHESIS, append_result, is_idle_agent_error, read_results
 from harness.score import is_improvement, min_ratio, noise_threshold, score
 from harness.shapes import BENCH_SHAPES
 
@@ -42,7 +42,13 @@ PROMPT = ("You are running experiment {exp_id} of an autoresearch loop. Read pro
           "follow it exactly. Write your hypothesis to experiments/current.json before editing "
           "the kernel.")
 
-DEFAULT_BENCH_CMD = "uv run python -m harness.bench {mode} --out {out}"
+DEFAULT_BENCH_CMD = "uv run --frozen python -m harness.bench {mode} --out {out}"
+# Compute apps on the GPU (graphics apps such as Xorg are not listed). Test hook: HARNESS_GPU_QUERY_CMD.
+GPU_QUERY_CMD = "nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader"
+GPU_IDLE_WAIT_S = 60.0
+GPU_POLL_S = 5.0
+# Leftovers of the agent's own tools, safe to kill before an official bench (own user only).
+STRAY_MARKERS = ("harness.check", "harness.profile", "ncu")
 BENCH_TIMEOUT_S = 15 * 60
 RETIME_S = 3 * 3600
 BACKOFF_MIN = [5, 10, 20, 30]  # then 30, 30, ...
@@ -74,6 +80,17 @@ def _killpg(proc: subprocess.Popen) -> None:
     except (ProcessLookupError, PermissionError):
         pass
     proc.wait()
+
+
+def _rate_limit_note(info: dict | None) -> str:
+    """'rate limit: status=allowed five_hour=0.30 seven_day=0.11' from a rate_limit_info dict."""
+    if not isinstance(info, dict):
+        return ""
+    parts = [f"status={info.get('status')}"]
+    for name, w in (info.get("unifiedWindows") or {}).items():
+        if isinstance(w, dict) and "utilization" in w:
+            parts.append(f"{name}={w['utilization']}")
+    return "rate limit: " + " ".join(parts)
 
 
 def _one_line(s: str, n: int = 120) -> str:
@@ -169,9 +186,76 @@ class Loop:
                     self.p(rel).write_bytes(snap[rel])  # undo immediately
         return changed
 
+    # ------------------------------------------------------------------ GPU idle (I5)
+    def gpu_apps(self) -> list[tuple[int, str]] | None:
+        """Compute apps on the GPU other than this process; None if the query fails."""
+        cmd = shlex.split(os.environ.get("HARNESS_GPU_QUERY_CMD") or GPU_QUERY_CMD)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            self.log(f"gpu idle check: query failed ({e!r}); proceeding")
+            return None
+        if r.returncode != 0:
+            self.log(f"gpu idle check: query exit {r.returncode} ({_one_line(r.stderr)}); proceeding")
+            return None
+        apps = []
+        for line in r.stdout.splitlines():
+            pid_s, _, name = line.partition(",")
+            try:
+                pid = int(pid_s.strip())
+            except ValueError:
+                continue
+            if pid != os.getpid():
+                apps.append((pid, name.strip()))
+        return apps
+
+    @staticmethod
+    def _cmdline(pid: int) -> str:
+        try:
+            return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _own(pid: int) -> bool:
+        try:
+            return os.stat(f"/proc/{pid}").st_uid == os.getuid()
+        except OSError:
+            return False
+
+    def ensure_gpu_idle(self) -> bool:
+        """Kill own leftover harness.check / harness.profile / ncu processes, then wait up to
+        60 s for any other compute app to leave. Returns False if the GPU is still busy."""
+        apps = self.gpu_apps()
+        if not apps:
+            return True
+        for pid, name in apps:
+            cmd = self._cmdline(pid)
+            if self._own(pid) and any(m in cmd for m in STRAY_MARKERS):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    self.log(f"gpu idle check: killed stray GPU process {pid} ({_one_line(cmd, 160)})")
+                except (ProcessLookupError, PermissionError) as e:
+                    self.log(f"gpu idle check: could not kill {pid}: {e!r}")
+            else:
+                self.log(f"gpu idle check: GPU in use by pid {pid} {name} ({_one_line(cmd, 160)}); waiting")
+        deadline = self.now() + GPU_IDLE_WAIT_S
+        while True:
+            apps = self.gpu_apps()
+            if not apps:
+                self.log("gpu idle check: GPU idle")
+                return True
+            if self.now() >= deadline:
+                self.log("gpu idle check: gpu busy after "
+                         f"{GPU_IDLE_WAIT_S:.0f}s: {', '.join(f'{p} {n}' for p, n in apps)}")
+                return False
+            self.sleep(GPU_POLL_S)
+
     # ------------------------------------------------------------------ bench
     def bench(self, mode: str, out_rel: str) -> tuple[str, dict | None, str]:
         """Returns (ok|failed_correctness|crashed, data, detail)."""
+        if not self.ensure_gpu_idle():
+            return "crashed", None, "gpu busy"
         out = self.p(out_rel)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.unlink(missing_ok=True)
@@ -278,7 +362,9 @@ class Loop:
                "status": "baseline", "score": med, "best_score": med,
                "min_vs_fa2": min_ratio(ours, fa2), **{f"ms_{s}": ours[s] for s in SHAPES},
                "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
-               "cache_write_tokens": 0, "agent_seconds": 0, "session_id": "", "commit": head}
+               "cache_write_tokens": 0, "agent_seconds": 0,
+               "active_s": round(self.clock.active_seconds(), 1),
+               "wall_s": round(self.clock.wall_seconds(), 1), "session_id": "", "commit": head}
         append_result(self.p(RESULTS), row)
         self.save_state()
         self.commit(f"exp 0: baseline (score {med:.3f})", [*self.state_paths(), BASELINES])
@@ -418,7 +504,7 @@ class Loop:
             h = json.loads(self.p(CURRENT).read_text()).get("hypothesis")
         except (OSError, ValueError, AttributeError):
             h = None
-        return _one_line(h, 500) if isinstance(h, str) and h.strip() else "(none recorded)"
+        return _one_line(h, 500) if isinstance(h, str) and h.strip() else NO_HYPOTHESIS
 
     def experiment(self, exp_id: int) -> bool:
         """Runs one invocation. Returns True if it counts as an experiment (not usage_limit)."""
@@ -427,7 +513,8 @@ class Loop:
         self.p(CURRENT).write_text("{}\n")
         snap = self.snapshot()
         out = run_claude(PROMPT.format(exp_id=exp_id), self.root, self.agent_timeout_s,
-                         claude_bin=os.environ.get("CLAUDE_BIN", "claude"))
+                         claude_bin=os.environ.get("CLAUDE_BIN", "claude"),
+                         stream_log=self.p(f"{BENCH_DIR}/agent_exp{exp_id}_{int(self.now())}.jsonl"))
         tampered = self.tampered(snap)  # restores protected files before anything else
         self.clock.heartbeat()
         hyp = self.read_hypothesis()
@@ -438,12 +525,15 @@ class Loop:
                "cache_write_tokens": out.usage.cache_write_tokens,
                "agent_seconds": round(out.duration_s, 1), "session_id": out.session_id or "",
                "commit": head}
+        rl = _rate_limit_note(out.rate_limit)
+        if rl:
+            self.log(f"exp {exp_id} agent {out.status}; {rl}")
         note = ""
         if out.status in ("ok", "timeout") and not tampered:
             self.st["consecutive_errors"] = 0
 
         if tampered:
-            self.restore(head)
+            self.restore(head, keep=(NOTES,))
             v = f"protected files modified: {', '.join(tampered)}"
             row["hypothesis"] = f"{hyp} [violation: {v}]"
             return self.finish(row, "violation", v)
@@ -462,27 +552,32 @@ class Loop:
             return False
 
         if out.status == "error":
-            self.restore(head)
+            self.restore(head, keep=(NOTES,))
             self.st["consecutive_errors"] = self.st.get("consecutive_errors", 0) + 1
             note = _one_line(out.result_text, 200)
+            # I4: an error before the agent did anything is retried under the same exp_id.
+            counted = not is_idle_agent_error({**row, "status": "agent_error"})
+            if not counted:
+                note += " (no work done: not counted as an experiment)"
             if self.st["consecutive_errors"] >= MAX_CONSECUTIVE_ERRORS:
                 self.st["consecutive_errors"] = 0
                 wait = self.backoff_s()
                 wait = self.begin_pause("agent_errors", wait)
                 self.finish(row, "agent_error", f"{note}; {MAX_CONSECUTIVE_ERRORS} in a row, "
-                            f"backing off {wait / 60:.1f} min")
+                            f"backing off {wait / 60:.1f} min", counted=counted)
                 self.wait_pause()
-                return True
-            return self.finish(row, "agent_error", note)
+                return counted
+            return self.finish(row, "agent_error", note, counted=counted)
 
         if out.status == "timeout":
-            self.restore(head)
+            self.restore(head, keep=(NOTES,))
             return self.finish(row, "timeout", f"agent exceeded {self.agent_timeout_s:.0f}s")
 
         self.st["backoff_idx"] = 0
         v = check_agent_changes(self.root, head)
         if v:
-            self.restore(head)
+            # M4: keep the agent's notes unless notes.md itself is what broke the rules.
+            self.restore(head, keep=() if NOTES in v else (NOTES,))
             row["hypothesis"] = f"{hyp} [violation: {v}]"
             return self.finish(row, "violation", v)
 
@@ -522,6 +617,8 @@ class Loop:
         exp_id = row["exp_id"]
         row["status"] = status
         row["best_score"] = self.st["best_score"]
+        row["active_s"] = round(self.clock.active_seconds(), 1)
+        row["wall_s"] = round(self.clock.wall_seconds(), 1)
         append_result(self.p(RESULTS), row)
         if counted:
             self.st["next_exp_id"] = exp_id + 1
@@ -538,7 +635,8 @@ class Loop:
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="python -m driver.loop")
     ap.add_argument("--max-experiments", type=int, default=None,
-                    help="stop after N experiments in this process (usage-limit retries excluded)")
+                    help="stop after N experiments in this process (usage-limit retries and agent errors "
+                         "before any work excluded)")
     ap.add_argument("--active-hours", type=float, default=12.0)
     ap.add_argument("--wall-hours", type=float, default=36.0)
     ap.add_argument("--agent-timeout-min", type=float, default=20.0)

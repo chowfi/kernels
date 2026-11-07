@@ -12,10 +12,11 @@ from pathlib import Path
 
 from driver.clock import RunClock
 from driver.ledger import TokenLedger, Usage
-from driver.results import read_results
+from driver.results import is_experiment, is_idle_agent_error, read_results
 from harness.shapes import BENCH_SHAPES
 
 START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
+DEFAULT_BENCH_CMD = ["uv", "run", "--frozen", "python", "-m", "harness.bench", "--all"]
 
 
 def _ratio(x: float) -> str:
@@ -58,17 +59,29 @@ def sdpa_note(final: dict) -> str:
             f"SDPA is called with `enable_gqa=True`.")
 
 
+def _num(x) -> float | None:
+    try:
+        return float(x) if x not in (None, "") else None
+    except ValueError:
+        return None
+
+
 def count_experiments(rows: list[dict]) -> dict:
     seed = next((r for r in rows if r["status"] == "baseline"), None)
-    exps = [r for r in rows if r["status"] not in ("baseline", "usage_limit")]
+    exps = [r for r in rows if is_experiment(r)]
     n = lambda *st: sum(r["status"] in st for r in exps)  # noqa: E731
     scored = [r for r in rows if r["status"] != "usage_limit" and r["best_score"]]
+    last_kept = next((r for r in reversed(rows) if r["status"] == "kept"), None)
     return {"total": len(exps), "kept": n("kept"), "reverted": n("reverted"),
             "failed_correctness": n("failed_correctness"),
             "other": n("crashed", "violation", "timeout", "agent_error"),
+            "timeouts": n("timeout"),
             "usage_limit_pauses": sum(r["status"] == "usage_limit" for r in rows),
+            "idle_agent_errors": sum(is_idle_agent_error(r) for r in rows),
             "seed_score": float(seed["score"]) if seed and seed["score"] else None,
-            "best_score": float(scored[-1]["best_score"]) if scored else None}
+            "best_score": float(scored[-1]["best_score"]) if scored else None,
+            "best_active_s": _num(last_kept.get("active_s")) if last_kept else None,
+            "best_wall_s": _num(last_kept.get("wall_s")) if last_kept else None}
 
 
 def _f3(x) -> str:
@@ -102,16 +115,25 @@ def _tok(u) -> str:
 
 def render_accounting(counts: dict, loop: Usage, build: dict | None, active_s: float, wall_s: float,
                       paused_s: float, stop_reason: str | None) -> str:
+    best_t = ("n/a" if counts.get("best_active_s") is None or counts.get("best_wall_s") is None
+              else f"{fmt_dur(counts['best_active_s'])} active, {fmt_dur(counts['best_wall_s'])} wall "
+                   f"(at the last kept experiment)")
+    tokens = (f"- Loop tokens (agent invocations, exact per-session totals from Claude result events): "
+              f"{_tok(loop)}.")
+    if counts.get("timeouts"):
+        tokens += (f" {counts['timeouts']} experiment(s) hit the 20-minute timeout and report no result "
+                   f"event, so loop tokens are a lower bound.")
     L = ["**Accounting**", "",
          f"- Experiments: {counts['total']} total ({counts['kept']} kept, {counts['reverted']} reverted, "
          f"{counts['failed_correctness']} failed correctness, {counts['other']} other: crash/violation/timeout/agent error). "
-         f"The seed (exp 0) and usage-limit pauses are not counted as experiments.",
+         f"The seed (exp 0), usage-limit pauses and {counts.get('idle_agent_errors', 0)} agent error(s) before any "
+         f"work (no hypothesis, zero output tokens; retried) are not counted as experiments.",
          f"- Score (geomean FA2 ms / ours ms): seed {_f3(counts['seed_score'])}, final best {_f3(counts['best_score'])}",
+         f"- Time to reach the best kernel: {best_t}",
          f"- Active time: {fmt_dur(active_s)}; wall time: {fmt_dur(wall_s)}; "
          f"{counts['usage_limit_pauses']} usage-limit pause(s), {fmt_dur(paused_s)} paused in total",
          f"- Stop reason: {stop_reason or 'n/a'}",
-         f"- Loop tokens (agent invocations, exact per-session totals from Claude result events): {_tok(loop)}. "
-         f"Experiments that hit the 20-minute timeout report no result event, so loop tokens are a lower bound.",
+         tokens,
          ]
     if build:
         b = Usage(build["input_tokens"], build["output_tokens"], build["cache_read_tokens"], build["cache_write_tokens"])
@@ -147,7 +169,7 @@ def main() -> int:
     else:
         final_path = a.final_json
         final_path.unlink(missing_ok=True)  # never publish a stale file if the bench crashes
-        cmd = a.bench_cmd.split() if a.bench_cmd else ["uv", "run", "python", "-m", "harness.bench", "--all"]
+        cmd = a.bench_cmd.split() if a.bench_cmd else DEFAULT_BENCH_CMD
         rc = subprocess.run([*cmd, "--out", str(final_path)]).returncode
         fresh = json.loads(final_path.read_text()) if final_path.exists() else None
         if rc != 0 and not (fresh and fresh.get("correct") is False):

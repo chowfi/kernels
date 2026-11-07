@@ -9,10 +9,31 @@ from harness.shapes import BENCH_SHAPES
 RESULTS_COLUMNS = ["exp_id", "utc", "hypothesis", "status", "score", "best_score", "min_vs_fa2",
                    *[f"ms_{s.name}" for s in BENCH_SHAPES],
                    "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
-                   "agent_seconds", "session_id", "commit"]
+                   "agent_seconds", "active_s", "wall_s", "session_id", "commit"]
 
 STATUSES = {"kept", "reverted", "failed_correctness", "crashed", "violation", "timeout",
             "agent_error", "baseline", "usage_limit"}
+
+
+NO_HYPOTHESIS = "(none recorded)"
+
+
+def is_experiment(row: dict) -> bool:
+    """Experiments are every row except the seed baseline, usage-limit pauses, and agent errors
+    where the agent did nothing (no hypothesis recorded and zero output tokens), e.g. an API error
+    on the first request. Those are retried under the same exp_id and reported separately (I4)."""
+    st = row.get("status")
+    if st in ("baseline", "usage_limit"):
+        return False
+    return not is_idle_agent_error(row)
+
+
+def is_idle_agent_error(row: dict) -> bool:
+    try:
+        out = int(float(row.get("output_tokens") or 0))
+    except (TypeError, ValueError):
+        out = 0
+    return row.get("status") == "agent_error" and row.get("hypothesis") == NO_HYPOTHESIS and out == 0
 
 
 def _cell(v) -> str:

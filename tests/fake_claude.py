@@ -3,11 +3,14 @@
 Behaviour is chosen by env FAKE_MODE:
   improve          hypothesis + BLOCK_N=64 -> 128 (or a harmless comment if already 128) + notes.md
   break            hypothesis + scale the output by 1.01 (wrong answer)
-  touch_harness    appends a comment to harness/score.py (guard violation)
+  touch_harness    appends a comment to harness/score.py (guard violation) + notes.md line
   untracked        writes scratch/evil.py (untracked file outside the allowed set)
   touch_tolerances edits results/tolerances.json (protected file)
   limit_once       usage-limit stream the first time (marker in $FAKE_STATE_DIR), then `improve`
-  error            error result, exit 1
+  error            notes.md line + error result (1 output token), exit 1
+  error_silent_once  first time: error result with zero tokens and no hypothesis (marker in
+                   $FAKE_STATE_DIR), then `improve`
+  notes_hang       notes.md line, then sleeps forever
   hang             sleeps forever (writes its pid to $FAKE_PID_FILE if set)
 FAKE_RESET_IN: seconds until the reset time reported by limit_once (default 120).
 The cwd is the repo root (run_claude sets it). Writes nothing outside the repo except the
@@ -47,6 +50,11 @@ def hypothesis(h: str) -> None:
     p.write_text(json.dumps({"hypothesis": h}))
 
 
+def note(line: str) -> None:
+    with open(ROOT / "notes.md", "a") as f:
+        f.write(line + "\n")
+
+
 def improve() -> None:
     hypothesis("larger KV tile\tBLOCK_N=128\nfor fewer loop iterations")
     k = ROOT / "kernel" / "attention.py"
@@ -75,6 +83,7 @@ def main() -> int:
         hypothesis("loosen the scorer")
         with open(ROOT / "harness" / "score.py", "a") as f:
             f.write("\n# tampered\n")
+        note("- violation attempt note")
         ok_stream()
     elif mode == "untracked":
         hypothesis("sneaky helper")
@@ -103,10 +112,26 @@ def main() -> int:
             emit({"type": "result", "is_error": True, "result": text, "session_id": SID,
                   "usage": usage(1, 2, 3, 4)})
     elif mode == "error":
+        note("- error-run note")
         emit({"type": "system", "subtype": "init", "session_id": SID})
         emit({"type": "result", "is_error": True, "result": "boom", "api_error_status": 500,
               "session_id": SID, "usage": usage(5, 1, 0, 0)})
         return 1
+    elif mode == "error_silent_once":
+        marker = Path(os.environ["FAKE_STATE_DIR"]) / "silent_error"
+        if marker.exists():
+            improve()
+        else:
+            marker.write_text("1")
+            emit({"type": "system", "subtype": "init", "session_id": SID})
+            emit({"type": "result", "is_error": True, "result": "API Error: overloaded",
+                  "session_id": SID, "usage": usage(0, 0, 0, 0)})
+            return 1
+    elif mode == "notes_hang":
+        note("- timeout-run note")
+        emit({"type": "system", "subtype": "init", "session_id": SID})
+        while True:
+            time.sleep(60)
     elif mode == "hang":
         if os.environ.get("FAKE_PID_FILE"):
             Path(os.environ["FAKE_PID_FILE"]).write_text(str(os.getpid()))

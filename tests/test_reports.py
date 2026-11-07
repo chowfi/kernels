@@ -50,8 +50,10 @@ def test_token_split(tmp_path):
 def test_experiment_counting_excludes_baseline_and_usage_limit():
     from driver.results import read_results
     c = count_experiments(read_results(FIX / "results_sample.tsv"))
-    assert c == {"total": 7, "kept": 2, "reverted": 2, "failed_correctness": 1, "other": 2,
-                 "usage_limit_pauses": 1, "seed_score": 0.27, "best_score": 0.90}
+    assert c == {"total": 8, "kept": 2, "reverted": 2, "failed_correctness": 1, "other": 3,
+                 "timeouts": 1, "usage_limit_pauses": 1, "idle_agent_errors": 1,
+                 "seed_score": 0.27, "best_score": 0.90,
+                 "best_active_s": 3600.0, "best_wall_s": 7200.0}
 
 
 def test_update_readme_between_markers(tmp_path):
@@ -96,11 +98,25 @@ def test_final_report_end_to_end(tmp_path):
 
 def test_accounting_block():
     from driver.ledger import Usage
-    s = render_accounting(counts={"total": 7, "kept": 2, "reverted": 2, "failed_correctness": 1, "other": 2,
-                                  "usage_limit_pauses": 1, "seed_score": 0.27, "best_score": 0.9},
-                          loop=Usage(1, 2, 3, 4), build=None, active_s=3600, wall_s=7200,
+    counts = {"total": 7, "kept": 2, "reverted": 2, "failed_correctness": 1, "other": 2, "timeouts": 1,
+              "usage_limit_pauses": 1, "idle_agent_errors": 2, "seed_score": 0.27, "best_score": 0.9,
+              "best_active_s": 3600.0, "best_wall_s": 7260.0}
+    s = render_accounting(counts=counts, loop=Usage(1, 2, 3, 4), build=None, active_s=3600, wall_s=7200,
                           paused_s=3600, stop_reason="budget")
     assert "7 total" in s and "stop reason" in s.lower() and "lower bound" in s
+    assert "2 agent error(s) before any work" in s
+    assert "Time to reach the best kernel: 1h 00m active, 2h 01m wall" in s
+
+
+def test_accounting_omits_timeout_sentence_without_timeouts():
+    from driver.ledger import Usage
+    counts = {"total": 1, "kept": 1, "reverted": 0, "failed_correctness": 0, "other": 0, "timeouts": 0,
+              "usage_limit_pauses": 0, "idle_agent_errors": 0, "seed_score": 0.27, "best_score": 0.9,
+              "best_active_s": None, "best_wall_s": None}
+    s = render_accounting(counts=counts, loop=Usage(1, 2, 3, 4), build=None, active_s=3600, wall_s=7200,
+                          paused_s=0, stop_reason="budget")
+    assert "lower bound" not in s and "timeout" not in s.lower().replace("crash/violation/timeout", "")
+    assert "Time to reach the best kernel: n/a" in s
 
 
 def test_plot_progress(tmp_path):
