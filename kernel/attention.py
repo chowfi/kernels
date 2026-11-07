@@ -109,6 +109,9 @@ _PREFILL_CONFIGS = [
         (128, 64, 8, 1),
         (128, 32, 8, 2),
         (64, 128, 8, 1),
+        # wide KV tile: fold/alpha/q-reload/barrier paid once per 128 columns;
+        # s2 single-buffers K/V here, so ~32 KB q + 32 KB K + 32 KB V = 96 KB smem
+        (128, 128, 8, 2),
     ]
 ]
 
