@@ -42,5 +42,6 @@
       "mb": 512,
       "gbps": 1670.8278433141536
     }
-  ]
+  ],
+  "fa2_source": "flash-attn==2.8.3.post2 (source build, sm_120 only, CUDA 12.8)"
 }

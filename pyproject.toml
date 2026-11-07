@@ -1,5 +1,5 @@
 [project]
-name = "kernels"
+name = "gqa-flash-autoresearch"
 version = "0.1.0"
 description = "Autoresearch loop for a Triton GQA flash-attention kernel on RTX 5090"
 requires-python = ">=3.12,<3.13"
@@ -8,7 +8,19 @@ dependencies = [
     "numpy",
     "matplotlib",
     "pytest",
+    "flash-attn==2.8.3.post2",
+    # flash-attn build deps (needed because of no-build-isolation below)
+    "setuptools", "wheel", "ninja", "packaging", "psutil", "einops",
 ]
+
+# flash-attn has no wheel for torch 2.11 / sm_120: it is built from source.
+# (building all 4 default archs with MAX_JOBS=8 OOM-killed nvcc on a 60GB box; sm_120 only is ~15 min.)
+# Reproduce with:
+#   FLASH_ATTN_CUDA_ARCHS=120 NVCC_THREADS=2 MAX_JOBS=6 CUDA_HOME=/usr/local/cuda-12.8 TORCH_CUDA_ARCH_LIST=12.0 \
+#   PATH=/usr/local/cuda-12.8/bin:$PATH uv pip install flash-attn==2.8.3.post2 --no-build-isolation
+# (install torch first, e.g. `uv sync --no-install-package flash-attn`, then the command above).
+[tool.uv]
+no-build-isolation-package = ["flash-attn"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
