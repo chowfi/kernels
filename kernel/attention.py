@@ -86,6 +86,26 @@ def _attn_fwd(
     tl.store(o_ptrs, acc.to(O.dtype.element_ty), mask=offs_m[:, None] < SEQ_Q)
 
 
+_PREFILL_CONFIGS = [
+    triton.Config({"BLOCK_M": bm, "BLOCK_N": bn}, num_warps=w, num_stages=s)
+    for bm, bn, w, s in [
+        (64, 64, 4, 2),
+        (64, 64, 4, 1),
+        (64, 64, 8, 2),
+        (64, 32, 4, 3),
+        (128, 64, 8, 2),
+        (128, 64, 8, 1),
+        (128, 32, 8, 2),
+        (64, 128, 8, 1),
+    ]
+]
+
+# Autotuned prefill launch (writes only O, so re-running candidates is safe).
+_attn_fwd_tuned = triton.autotune(
+    configs=_PREFILL_CONFIGS, key=["SEQ_Q", "SEQ_KV", "CAUSAL", "HEAD_DIM"],
+)(_attn_fwd)
+
+
 @triton.jit
 def _attn_fwd_split(
     Q, K, V, MID_O, MID_LSE,
@@ -235,6 +255,18 @@ def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool) -
         sm_count = _sm_count(q.device)
         if base_ctas < sm_count:
             return _attention_split(q, k, v, o, block_m, block_n, base_ctas, sm_count)
+    if Sq > 16:
+        grid = lambda meta: (triton.cdiv(Sq, meta["BLOCK_M"]), H, B)  # noqa: E731
+        _attn_fwd_tuned[grid](
+            q, k, v, o,
+            q.stride(0), q.stride(1), q.stride(2),
+            k.stride(0), k.stride(1), k.stride(2),
+            v.stride(0), v.stride(1), v.stride(2),
+            o.stride(0), o.stride(1), o.stride(2),
+            H, Sq, Skv, H // Hkv, 1.0 / math.sqrt(D),
+            HEAD_DIM=D, CAUSAL=causal,
+        )
+        return o
     grid = (triton.cdiv(Sq, block_m), H, B)
     _attn_fwd[grid](
         q, k, v, o,

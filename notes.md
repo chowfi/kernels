@@ -13,3 +13,9 @@ an unmasked phase over blocks fully below the diagonal (no mask math, unmasked K
 for the diagonal block(s). Expect ~2x on prefill rows. Passed check (incl. heldout_prefill_3000).
 Next: reverse start_m order so the longest causal blocks launch first (tail effect), exp2 softmax with
 log2e folded into scale, then prefill tile sweep (BLOCK_M 128, num_warps 8, num_stages 2-3); GQA packing for decode.
+
+Experiment 3: prefill tile sweep via triton.autotune on _attn_fwd (Sq > 16 only; key SEQ_Q/SEQ_KV/CAUSAL/HEAD_DIM),
+8 configs over BLOCK_M {64,128} x BLOCK_N {32,64,128} x warps {4,8} x stages {1,2,3}. Motivation: HEAD profile on
+prefill_8192 showed 255 regs/thread (spills), 57 KB smem -> 1 block/SM, 8.3% occupancy, 25.7% SM throughput.
+Passed check. Next: exp2 softmax (log2e in scale), reverse start_m order for causal tail, GQA packing in decode
+(decode_16384+ still < FA2), and re-profile prefill to see which config won and whether regs still spill.

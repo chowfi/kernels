@@ -32,3 +32,38 @@ heldout_decode_5001 OK max_abs_err=0.0002437 tol=0.0006993 max_row_rel=0.002437 
 heldout_prefill_4096_g8 OK max_abs_err=0.007656 tol=0.02192 max_row_rel=0.003237 rel_tol=0.008476
 heldout_decode_8192_g1 OK max_abs_err=0.0002389 tol=0.0005988 max_row_rel=0.002592 rel_tol=0.006644
 
+[2026-11-07T14:48:34+00:00] harness.profile --shape prefill_8192
+Profile of HEAD kernel (7d7f9c0) on prefill_8192
+kernel 0: _attn_fwd
+  achieved occupancy (active warps, % of peak): 8.33
+  theoretical occupancy (%): 8.33
+  occupancy limit: registers (blocks/SM): 2
+  occupancy limit: shared mem (blocks/SM): 1
+  SM throughput (% of peak): 25.70
+  compute+memory throughput (% of peak): 25.61
+  DRAM throughput (% of peak): 1.26
+  L2 hit rate (%): 98.10
+  registers per thread: 255
+  shared memory per block, dynamic (bytes): 57,344
+  shared memory per block, static (bytes): 0
+  grid size (blocks): 4,096
+  block size (threads): 128
+  waves per SM: 24.09
+
+[2026-11-07T14:49:32+00:00] harness.check
+prefill_2048 OK max_abs_err=0.007873 tol=0.02455 max_row_rel=0.003021 rel_tol=0.009181
+prefill_4096 OK max_abs_err=0.007829 tol=0.02291 max_row_rel=0.003086 rel_tol=0.009471
+prefill_8192 OK max_abs_err=0.009938 tol=0.02283 max_row_rel=0.003176 rel_tol=0.008965
+prefill_16384 OK max_abs_err=0.007766 tol=0.02565 max_row_rel=0.003185 rel_tol=0.009132
+prefill_32768 OK max_abs_err=0.007976 tol=0.02351 max_row_rel=0.003259 rel_tol=0.009963
+decode_2048 OK max_abs_err=0.0003651 tol=0.0007679 max_row_rel=0.002497 rel_tol=0.006673
+decode_4096 OK max_abs_err=0.0002751 tol=0.0007143 max_row_rel=0.00254 rel_tol=0.006502
+decode_8192 OK max_abs_err=0.0001886 tol=0.0004772 max_row_rel=0.002488 rel_tol=0.006462
+decode_16384 OK max_abs_err=0.0001437 tol=0.0003977 max_row_rel=0.002649 rel_tol=0.006364
+decode_32768 OK max_abs_err=9.647e-05 tol=0.0002929 max_row_rel=0.002717 rel_tol=0.006498
+decode_65536 OK max_abs_err=6.635e-05 tol=0.0002356 max_row_rel=0.002531 rel_tol=0.006246
+heldout_prefill_3000 OK max_abs_err=0.008186 tol=0.02453 max_row_rel=0.00302 rel_tol=0.009359
+heldout_decode_5001 OK max_abs_err=0.0002437 tol=0.0006993 max_row_rel=0.002437 rel_tol=0.006425
+heldout_prefill_4096_g8 OK max_abs_err=0.007656 tol=0.02192 max_row_rel=0.003237 rel_tol=0.008476
+heldout_decode_8192_g1 OK max_abs_err=0.0002389 tol=0.0005988 max_row_rel=0.002592 rel_tol=0.006644
+
