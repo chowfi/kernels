@@ -6,7 +6,7 @@ import torch
 CHUNK = 1024
 
 
-def _chunked(q, k, v, causal: bool):
+def _chunked(q, k, v, causal: bool, bf16_pv: bool = False):
     B, Sq, H, D = q.shape
     Skv, Hkv = k.shape[1], k.shape[2]
     G = H // Hkv
@@ -30,7 +30,10 @@ def _chunked(q, k, v, causal: bool):
                 sc.masked_fill_(kj > qi, float("-inf"))
             p = torch.softmax(sc, dim=-1)
             del sc
-            o = torch.matmul(p, vc)
+            if bf16_pv:
+                o = torch.matmul(p.to(torch.bfloat16), vc.to(torch.bfloat16)).float()
+            else:
+                o = torch.matmul(p, vc)
             out[b, s0:s1] = o.reshape(H, s1 - s0, D).transpose(0, 1)
     return out
 
@@ -41,10 +44,10 @@ def reference_attention(q, k, v, causal: bool):
 
 
 def bf16_math_attention(q, k, v, causal: bool):
-    """bf16 output matching SDPA MATH on bf16 inputs, computed chunked so it fits at 32K prefill.
+    """bf16 output with FlashAttention-style precision, chunked so it fits at 32K prefill.
 
-    Real MATH (verified on small shapes) upcasts bf16 inputs to fp32 internally and rounds only the
-    final output to bf16, so its error vs the fp32 reference is output rounding. Real MATH
-    materializes the full score matrix and OOMs at 32K prefill, hence this emulation.
+    Mirrors FA's own test convention (a lower-precision PyTorch reference): Q.K^T from bf16 inputs
+    with fp32 accumulate (scores kept fp32), fp32 softmax, P rounded to bf16, P.V in bf16 with fp32
+    accumulate, output rounded to bf16. Its max error vs the fp32 reference sets the gate tolerance.
     """
-    return _chunked(q, k, v, causal).to(torch.bfloat16)
+    return _chunked(q, k, v, causal, bf16_pv=True).to(torch.bfloat16)

@@ -27,7 +27,7 @@ def test_reference_matches_sdpa_math_small():
 def test_gate_passes_fa2_and_rejects_broken():
     shapes = [Shape("prefill", 1024, 1024, causal=True), Shape("decode", 1, 3000, causal=False)]
     assert all(r.ok for r in check_kernel(fa2_attention, shapes))
-    broken = lambda q, k, v, c: fa2_attention(q, k, v, c) * 1.05  # 1.01 slips under the decode tol (see report)
+    broken = lambda q, k, v, c: fa2_attention(q, k, v, c) * 1.01
     assert not any(r.ok for r in check_kernel(broken, shapes))
     raising = lambda q, k, v, c: 1 / 0
     r = check_kernel(raising, shapes[:1])[0]
@@ -55,7 +55,7 @@ def test_tolerance_cached(tmp_path, monkeypatch):
     data = json.loads((tmp_path / "tolerances.json").read_text())
     assert f"{s.name}|seed0" in data
     r2 = check_kernel(fa2_attention, [s])[0]
-    assert r1.tol == r2.tol > 1e-3
+    assert r1.tol == r2.tol > 1e-4
 
 
 @pytest.mark.gpu

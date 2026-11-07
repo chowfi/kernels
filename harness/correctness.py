@@ -43,9 +43,10 @@ def _store(key: str, value: float) -> None:
 
 
 def tolerance(shape: Shape, seed: int, q, k, v, ref) -> float:
-    """tol = 2 * max|bf16_math - ref| + 1e-3, cached per (shape, seed).
+    """tol = 2 * max|bf16_emulated - ref| + 1e-4, cached per (shape, seed).
 
-    bf16_math is a chunked emulation of SDPA MATH on bf16 (see harness/reference.py).
+    bf16_emulated is chunked FA-style bf16 attention (P rounded to bf16 before P.V; see
+    harness/reference.py). The small 1e-4 floor keeps decode (outputs ~0.1) sensitive to ~1% bugs.
     """
     key = f"{shape.name}|seed{seed}"
     data = _load()
@@ -54,7 +55,7 @@ def tolerance(shape: Shape, seed: int, q, k, v, ref) -> float:
     m = bf16_math_attention(q, k, v, shape.causal)
     err = (m.float() - ref).abs().max().item()
     del m
-    tol = 2 * err + 1e-3
+    tol = 2 * err + 1e-4
     _store(key, tol)
     return tol
 
