@@ -35,7 +35,7 @@ AGENT_TOOLS = [
 # not in --allowedTools, so the scoping is real (verified).
 PERMISSION_MODE = "dontAsk"
 
-LIMIT_RE = re.compile(r"usage limit|rate limit|429|limit reached", re.I)
+LIMIT_RE = re.compile(r"usage limit|rate limit|\b429\b|limit reached", re.I)
 
 
 @dataclass
@@ -107,6 +107,12 @@ def parse_stream(lines: Iterable[str]) -> ClaudeOutcome:
             usage = usage + u
         return ClaudeOutcome("error", usage, session_id, "", None)
 
+    # Evidence (tests/fixtures/stream_multiturn.jsonl, 3 turns, 3 distinct ids): the
+    # result.usage is cumulative over all turns and matches modelUsage exactly
+    # (in 6, cache_read 54741, cache_write 15485, out 369). The per-message sum agrees
+    # on input/cache fields but UNDERCOUNTS output (173 vs 369): assistant events carry
+    # mid-stream output_tokens snapshots. So result.usage is preferred; the per-message
+    # sum (last usage per id) is only a lower-bound fallback for timeouts/crashes.
     if isinstance(result.get("usage"), dict):
         usage = _usage_from(result["usage"])
     else:
@@ -120,9 +126,12 @@ def parse_stream(lines: Iterable[str]) -> ClaudeOutcome:
     reset = None
     if result.get("is_error"):
         status = "error"
-        if result.get("api_error_status") == 429 or LIMIT_RE.search(text):
+        if LIMIT_RE.search(text):
             status = "usage_limit"
-            reset = _parse_reset(text)
+    if result.get("api_error_status") == 429:
+        status = "usage_limit"
+    if status == "usage_limit":
+        reset = _parse_reset(text)
     return ClaudeOutcome(status, usage, session_id, text, reset)  # type: ignore[arg-type]
 
 
@@ -144,13 +153,15 @@ def run_claude(prompt: str, cwd: Path, timeout_s: int,
     q: queue.Queue = queue.Queue()
     with tempfile.TemporaryFile("w+") as errf:
         proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=errf, text=True,
+                                stdout=subprocess.PIPE, stderr=errf, text=True, errors="replace",
                                 start_new_session=True)
 
         def reader():
-            for ln in proc.stdout:  # type: ignore[union-attr]
-                q.put(ln)
-            q.put(None)
+            try:
+                for ln in proc.stdout:  # type: ignore[union-attr]
+                    q.put(ln)
+            finally:
+                q.put(None)
 
         th = threading.Thread(target=reader, daemon=True)
         th.start()

@@ -48,8 +48,49 @@ def test_429_status_is_limit():
 
 
 def test_agent_tools_scoped():
-    assert "Edit" not in AGENT_TOOLS and "Write" not in AGENT_TOOLS
-    assert "Edit(kernel/attention.py)" in AGENT_TOOLS
+    assert AGENT_TOOLS == [
+        "Read", "Glob", "Grep", "Edit(kernel/attention.py)", "Write(kernel/attention.py)",
+        "Edit(notes.md)", "Write(experiments/current.json)", "Edit(experiments/current.json)",
+        "Bash(uv run python -m harness.check:*)", "Bash(uv run python -m harness.profile:*)",
+        "Bash(git log:*)", "Bash(git diff:*)", "Bash(git show:*)"]
+
+
+def test_429_status_without_is_error():
+    r = json.dumps({"type": "result", "is_error": False, "result": "x", "api_error_status": 429})
+    assert parse_stream([r]).status == "usage_limit"
+
+
+def test_bare_429_anchored():
+    r = json.dumps({"type": "result", "is_error": True, "result": "request id 14290 failed"})
+    assert parse_stream([r]).status == "error"
+
+
+def test_multiturn_uses_cumulative_result_usage():
+    o = parse_stream(open(FIX / "stream_multiturn.jsonl"))
+    assert o.status == "ok"
+    assert o.usage == Usage(6, 369, 54741, 15485)
+
+
+def test_multiturn_truncated_fallback_dedupes_ids():
+    lines = [l for l in open(FIX / "stream_multiturn.jsonl") if '"type":"result"' not in l.replace(" ", "")]
+    o = parse_stream(lines)
+    assert o.usage.input_tokens == 6 and o.usage.cache_read_tokens == 54741
+    assert o.usage.cache_write_tokens == 15485
+
+
+def test_command_line(tmp_path):
+    out = tmp_path / "argv.json"
+    b = _fake(tmp_path, f"import sys, json\njson.dump(sys.argv[1:], open({str(out)!r}, 'w'))\n")
+    run_claude("my prompt", tmp_path, 30, claude_bin=b)
+    argv = json.loads(out.read_text())
+    assert argv[:2] == ["-p", "my prompt"]
+    def val(flag):
+        return argv[argv.index(flag) + 1]
+    assert val("--model") == "claude-opus-5-5" and val("--effort") == "high"
+    assert val("--output-format") == "stream-json" and "--verbose" in argv
+    assert val("--permission-mode") == "dontAsk"
+    i = argv.index("--allowedTools")
+    assert argv[i + 1:] == AGENT_TOOLS
 
 
 def _fake(tmp_path, body):
