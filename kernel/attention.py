@@ -36,6 +36,9 @@ def _attn_fwd(
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
 
+    # exp2 softmax: log2(e) folded into the scale, m_i kept in the log2 domain
+    qk_scale = scale * 1.4426950408889634
+
     if CAUSAL:
         # causal requires SEQ_Q == SEQ_KV. KV blocks entirely below the diagonal
         # (cur_n < start_m*BLOCK_M <= every offs_m, and < SEQ_KV) need no mask.
@@ -43,11 +46,11 @@ def _attn_fwd(
         for start_n in range(0, full_hi, BLOCK_N):
             cur_n = start_n + offs_n
             k = tl.load(k_base + cur_n[None, :] * sk_s + offs_d[:, None])
-            s = tl.dot(q, k) * scale
+            qk = tl.dot(q, k)
 
-            m_new = tl.maximum(m_i, tl.max(s, 1))
-            p = tl.exp(s - m_new[:, None])
-            alpha = tl.exp(m_i - m_new)
+            m_new = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
+            p = tl.math.exp2(qk * qk_scale - m_new[:, None])
+            alpha = tl.math.exp2(m_i - m_new)
             l_i = l_i * alpha + tl.sum(p, 1)
             acc = acc * alpha[:, None]
 
@@ -64,15 +67,15 @@ def _attn_fwd(
         cur_n = start_n + offs_n
         k = tl.load(k_base + cur_n[None, :] * sk_s + offs_d[:, None],
                     mask=cur_n[None, :] < SEQ_KV, other=0.0)
-        s = tl.dot(q, k) * scale
+        s = tl.dot(q, k) * qk_scale
         mask = cur_n[None, :] < SEQ_KV
         if CAUSAL:
             mask = mask & (offs_m[:, None] >= cur_n[None, :])
         s = tl.where(mask, s, float("-inf"))
 
         m_new = tl.maximum(m_i, tl.max(s, 1))
-        p = tl.exp(s - m_new[:, None])
-        alpha = tl.exp(m_i - m_new)
+        p = tl.math.exp2(s - m_new[:, None])
+        alpha = tl.math.exp2(m_i - m_new)
         l_i = l_i * alpha + tl.sum(p, 1)
         acc = acc * alpha[:, None]
 
@@ -144,6 +147,8 @@ def _attn_fwd_split(
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
 
+    qk_scale = scale * 1.4426950408889634  # log2 domain throughout
+
     lo = split * CHUNK
     hi = tl.minimum(lo + CHUNK, SEQ_KV)
     for start_n in range(lo, hi, BLOCK_N):
@@ -151,12 +156,12 @@ def _attn_fwd_split(
         kv_mask = cur_n < hi
         k = tl.load(k_base + cur_n[None, :] * sk_s + offs_d[:, None],
                     mask=kv_mask[None, :], other=0.0)
-        s = tl.dot(q, k) * scale
+        s = tl.dot(q, k) * qk_scale
         s = tl.where(kv_mask[None, :], s, float("-inf"))
 
         m_new = tl.maximum(m_i, tl.max(s, 1))
-        p = tl.exp(s - m_new[:, None])
-        alpha = tl.exp(m_i - m_new)
+        p = tl.math.exp2(s - m_new[:, None])
+        alpha = tl.math.exp2(m_i - m_new)
         l_i = l_i * alpha + tl.sum(p, 1)
         acc = acc * alpha[:, None]
 
@@ -166,7 +171,7 @@ def _attn_fwd_split(
         m_i = m_new
 
     acc = acc / l_i[:, None]
-    lse = m_i + tl.log(l_i)
+    lse = m_i + tl.math.log2(l_i)  # log2-domain LSE; combine uses exp2
 
     # workspace layout: MID_O [B, H, SEQ_Q, NUM_SPLITS, D], MID_LSE [B, H, SEQ_Q, NUM_SPLITS]
     row = (b * H + offs_h) * SEQ_Q + offs_m
@@ -192,7 +197,7 @@ def _attn_combine(
     row = (b * H + h) * SEQ_Q + m
     lse = tl.load(MID_LSE + row * NUM_SPLITS + offs_s, mask=s_mask, other=float("-inf"))
     m_max = tl.max(lse, 0)
-    w = tl.exp(lse - m_max)
+    w = tl.math.exp2(lse - m_max)
     w = tl.where(s_mask, w, 0.0)
     parts = tl.load(MID_O + (row * NUM_SPLITS + offs_s[:, None]) * HEAD_DIM + offs_d[None, :],
                     mask=s_mask[:, None], other=0.0)

@@ -25,3 +25,9 @@ Experiment 4: GQA packing in the split-KV (decode) kernel. Each program now owns
 traffic; decode_65536 KV = 268 MB, beyond L2). Split count recomputed from packed grid (8 base CTAs for decode ->
 ~80 splits at 64k). Workspace/combine unchanged. Passed check incl. g1/g8 held-outs. Next: decode BLOCK_N/stages/warps
 sweep for the split kernel (BLOCK_N 128, num_stages 3-4), split-count target tuning, exp2 softmax, causal reverse order.
+
+Experiment 5: exp2 softmax with log2(e) folded into qk_scale in all kernels (unmasked causal loop: raw qk, m in log2 domain,
+p = exp2(qk*qk_scale - m) -> one FFMA + ex2 per element); split kernel stores log2-domain LSE, combine uses exp2.
+Motivation: HEAD prefill_8192 profile = BLOCK_M 128 w8, 223 regs, 1 block/SM (16.7% occ), SM throughput 37.6%, L2 hit 96%
+-> prefill is issue-limited in-CTA and is the weakest row group (~0.93x). Passed check. Next: reverse causal start_m order
+(heaviest blocks first, tail), configs that fit 2 blocks/SM (BLOCK_M 64 w4 with <=128 regs / <=50 KB smem), decode split sweep.
