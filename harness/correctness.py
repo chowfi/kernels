@@ -97,10 +97,34 @@ def build_tolerances(shapes: list[Shape] | None = None, seed: int = 0) -> dict:
     return data
 
 
+def check_output(shape: Shape, out, ref, tols: dict) -> CorrectnessResult:
+    """Compare a kernel output against `ref` (fp32 reference computed from the inputs BEFORE the
+    kernel ran, so a kernel that mutates its inputs cannot move the target) with tolerances `tols`."""
+    of = None
+    try:
+        if not isinstance(out, torch.Tensor):
+            raise TypeError(f"output is {type(out).__name__}, not a Tensor")
+        if out.shape != ref.shape:
+            raise ValueError(f"wrong shape {tuple(out.shape)}, expected {tuple(ref.shape)}")
+        if out.dtype != torch.bfloat16:
+            raise ValueError(f"wrong dtype {out.dtype}, expected torch.bfloat16")
+        of = out.float()
+        if torch.isnan(of).any() or torch.isinf(of).any():
+            raise ValueError("output contains NaN/Inf")
+        err = (of - ref).abs().max().item()
+        rel = _row_rel(of, ref)
+        ok = err <= tols["abs_tol"] and rel <= tols["rel_tol"]
+        return CorrectnessResult(shape.name, ok, err, tols["abs_tol"], None, rel, tols["rel_tol"])
+    except Exception as e:  # noqa: BLE001 - any kernel failure is a gate failure
+        return CorrectnessResult(shape.name, False, float("nan"), tols["abs_tol"], repr(e))
+    finally:
+        del of
+
+
 def check_kernel(fn: Callable, shapes: list[Shape], seed: int = 0) -> list[CorrectnessResult]:
     results = []
     for shape in shapes:
-        q = k = v = ref = out = of = None
+        q = k = v = ref = out = None
         tol = float("nan")
         try:
             q, k, v = make_inputs(shape, seed)
@@ -108,26 +132,13 @@ def check_kernel(fn: Callable, shapes: list[Shape], seed: int = 0) -> list[Corre
             tols = tolerance(shape, seed, q, k, v, ref)
             tol = tols["abs_tol"]
             out = fn(q, k, v, shape.causal)
-            if not isinstance(out, torch.Tensor):
-                raise TypeError(f"output is {type(out).__name__}, not a Tensor")
-            if out.shape != q.shape:
-                raise ValueError(f"wrong shape {tuple(out.shape)}, expected {tuple(q.shape)}")
-            if out.dtype != torch.bfloat16:
-                raise ValueError(f"wrong dtype {out.dtype}, expected torch.bfloat16")
-            of = out.float()
-            if torch.isnan(of).any() or torch.isinf(of).any():
-                raise ValueError("output contains NaN/Inf")
-            err = (of - ref).abs().max().item()
-            rel = _row_rel(of, ref)
-            ok = err <= tol and rel <= tols["rel_tol"]
-            results.append(CorrectnessResult(shape.name, ok, err, tol, None, rel, tols["rel_tol"]))
+            results.append(check_output(shape, out, ref, tols))
         except Exception as e:  # noqa: BLE001 - any kernel failure is a gate failure
             results.append(CorrectnessResult(shape.name, False, float("nan"), tol, repr(e)))
         finally:
-            del q, k, v, ref, out, of
+            del q, k, v, ref, out
             torch.cuda.empty_cache()
     return results
-
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

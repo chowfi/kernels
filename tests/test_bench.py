@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import pytest
+from pathlib import Path
 
 from harness.shapes import BENCH_SHAPES
 
@@ -24,6 +25,8 @@ def test_bench_ours_and_baselines(tmp_path):
     assert o["correct"] and set(o["ours_ms"]) == {s.name for s in BENCH_SHAPES}
     assert all(v > 0 for v in o["ours_ms"].values())
     assert "utc" in o and o["trials"] == 2
+    assert set(o["post_timing_checks"]) == {s.name for s in BENCH_SHAPES}
+    assert o["triton_kernels"] == ["_attn_fwd"] and o["fresh_seed"] > 0
 
 
 def test_check_logs_import_failure(tmp_path):
@@ -84,3 +87,80 @@ def test_bench_detects_timing_patch_at_call(tmp_path):
     assert r.returncode == 2, r.stdout + r.stderr
     o = json.loads(p.read_text())
     assert o["correct"] is False and "triton.testing.do_bench" in o["error"]
+
+
+# ---------------------------------------------------------------- I1: freshness + Triton-only
+
+def test_non_triton_kernel_filter():
+    from harness.bench import non_triton_kernels
+    tri = {"_attn_fwd", "_decode_split"}
+    names = ["_attn_fwd", "_decode_split",
+             "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>, ...>",
+             "void at::native::elementwise_kernel<128, 2, at::native::direct_copy_kernel_cuda(...)>",
+             "Memset (Device)", "Memcpy DtoD (Device -> Device)"]
+    assert non_triton_kernels(names, tri) == []
+    bad = ["void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128>, cutlass::bfloat16_t>",
+           "void (anonymous namespace)::softmax_warp_forward<float, float, float, 11>",
+           "sm80_xmma_gemm_bf16bf16_bf16f32_f32_tn_n_tilesize96x128x32",
+           "void at::native::elementwise_kernel<128, 2, at::native::exp_kernel_cuda(...)>",
+           "_attn_fwd_flash_fwd"]  # unknown name (not launched through Triton)
+    assert non_triton_kernels(names + bad, tri) == bad
+
+
+_CACHING_KERNEL = """from kernel.attention import attention as _real
+_OUT = {}
+
+
+def attention(q, k, v, causal):
+    key = (q.data_ptr(), k.data_ptr(), tuple(q.shape), tuple(k.shape), causal)
+    if key not in _OUT:
+        _OUT[key] = _real(q, k, v, causal)
+    return _OUT[key]
+"""
+
+_SDPA_KERNEL = """import torch.nn.functional as F
+
+
+def attention(q, k, v, causal):
+    o = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+                                       is_causal=causal, enable_gqa=True)
+    return o.transpose(1, 2).contiguous()
+"""
+
+
+@pytest.mark.gpu
+def test_bench_rejects_data_keyed_output_cache(tmp_path):
+    env = _env_with_kernel(tmp_path, "caching_kernel", _CACHING_KERNEL)
+    p = tmp_path / "o.json"
+    r = subprocess.run([sys.executable, "-m", "harness.bench", "--ours", "--trials", "1", "--out", str(p)],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 2, r.stdout + r.stderr
+    o = json.loads(p.read_text())
+    assert o["correct"] is False and "post-timing freshness check failed" in o["error"]
+    assert "ours_ms" not in o
+
+
+@pytest.mark.gpu
+def test_bench_rejects_non_triton_kernels(tmp_path):
+    env = _env_with_kernel(tmp_path, "sdpa_kernel", _SDPA_KERNEL)
+    p = tmp_path / "o.json"
+    r = subprocess.run([sys.executable, "-m", "harness.bench", "--ours", "--trials", "1", "--out", str(p)],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 2, r.stdout + r.stderr
+    o = json.loads(p.read_text())
+    assert o["correct"] is False and "non-Triton CUDA kernel" in o["error"]
+    assert "flash_fwd" in o["error"] and "ours_ms" not in o
+
+
+@pytest.mark.gpu
+def test_bench_accepts_smoke_exp1_kernel(tmp_path):
+    src = (Path(__file__).parent / "fixtures" / "kernels" / "smoke_exp1.py").read_text()
+    env = _env_with_kernel(tmp_path, "smoke_exp1_kernel", src)
+    p = tmp_path / "o.json"
+    r = subprocess.run([sys.executable, "-m", "harness.bench", "--ours", "--trials", "1", "--out", str(p)],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    o = json.loads(p.read_text())
+    assert o["correct"] is True and set(o["ours_ms"]) == {s.name for s in BENCH_SHAPES}
+    assert set(o["post_timing_checks"]) == {s.name for s in BENCH_SHAPES}
+    assert {"_decode_split", "_decode_combine", "_attn_fwd"} <= set(o["triton_kernels"])
