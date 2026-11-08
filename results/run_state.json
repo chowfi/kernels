@@ -18,8 +18,8 @@
   "consecutive_errors": 0,
   "harness_hash": "9a97d1c1f95051e55de77474be0685f8f980b4e8f6d31e3beccb38bbe364fa3a",
   "next_exp_id": 37,
-  "pause_reason": null,
-  "pause_until": null,
+  "pause_reason": "usage_limit",
+  "pause_until": 1794109860.0000024,
   "stop_reason": null,
   "threshold": 0.005
 }
