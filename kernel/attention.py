@@ -148,12 +148,14 @@ def _kv_to_fp16(
 
 @triton.jit
 def _attn_fwd_split(
-    Q, K, V, MID_O, MID_LSE,
+    Q, K, V, MID_O, MID_LSE, O, CNT,
     sq_b, sq_s, sq_h,
     sk_b, sk_s, sk_h,
     sv_b, sv_s, sv_h,
+    so_b, so_s, so_h,
     H, SEQ_Q, SEQ_KV, GROUP, NUM_SPLITS, CHUNK, scale,
     HEAD_DIM: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
+    FUSE: tl.constexpr, BLOCK_S: tl.constexpr, CR: tl.constexpr,
 ):
     # Non-causal split-KV pass with GQA packing: each program handles one
     # (packed m-block, KV head, split). Packed row r covers query position
@@ -218,6 +220,39 @@ def _attn_fwd_split(
     tl.store(o_ptrs, acc, mask=row_mask[:, None])
     tl.store(MID_LSE + row * NUM_SPLITS + split, lse, mask=row_mask)
 
+    if FUSE:
+        # Short decodes only: the last split CTA for these packed rows combines
+        # all splits in-kernel (one L2 round trip), so no combine launch is needed.
+        tl.debug_barrier()  # every thread's partial stores precede the release
+        cnt_ptr = CNT + b * tl.num_programs(1) + pid_mh
+        old = tl.atomic_add(cnt_ptr, 1, sem="acq_rel", scope="gpu")
+        if old == NUM_SPLITS - 1:
+            tl.atomic_xchg(cnt_ptr, 0, sem="relaxed", scope="gpu")  # ready for next call
+            offs_s = tl.arange(0, BLOCK_S)
+            s_mask = offs_s < NUM_SPLITS
+            offs_cr = tl.arange(0, CR)
+            n_rows = tl.minimum(SEQ_Q * GROUP - start_m * BLOCK_M, BLOCK_M)
+            for r0 in range(0, n_rows, CR):
+                r_ok = (r0 + offs_cr) < n_rows
+                rr = start_m * BLOCK_M + r0 + offs_cr
+                rm = rr // GROUP
+                rh = kvh * GROUP + rr % GROUP
+                crow = (b * H + rh) * SEQ_Q + rm
+                lmask = r_ok[:, None] & s_mask[None, :]
+                lse_c = tl.load(MID_LSE + crow[:, None] * NUM_SPLITS + offs_s[None, :],
+                                mask=lmask, other=float("-inf"), cache_modifier=".cg")
+                m_max = tl.where(r_ok, tl.max(lse_c, 1), 0.0)
+                w = tl.math.exp2(lse_c - m_max[:, None])
+                parts = tl.load(
+                    MID_O + (crow[:, None, None] * NUM_SPLITS + offs_s[None, :, None]) * HEAD_DIM
+                    + offs_d[None, None, :],
+                    mask=lmask[:, :, None], other=0.0, cache_modifier=".cg")
+                num = tl.sum(parts * w[:, :, None], 1)
+                den = tl.where(r_ok, tl.sum(w, 1), 1.0)
+                out = num / den[:, None]
+                tl.store(O + b * so_b + rm[:, None] * so_s + rh[:, None] * so_h + offs_d[None, :],
+                         out.to(O.dtype.element_ty), mask=r_ok[:, None])
+
 
 @triton.jit
 def _attn_combine(
@@ -246,6 +281,11 @@ def _attn_combine(
 
 _SM_COUNT = {}
 
+# Zeroed int32 arrival counters for the fused short-decode combine, keyed on
+# (device, count); the last CTA of each group resets its counter to 0.
+_COUNTERS = {}
+_FUSE_MAX_SPLITS = 32
+
 # Sequence length from which prefill uses the wide 128x128 tile without autotuning
 # (diagonal waste and pipeline prologue are small relative to per-tile overheads).
 _WIDE_TILE_MIN_SEQ = 8192
@@ -270,17 +310,30 @@ def _attention_split(q, k, v, o, block_m, block_n, base_ctas, sm_count):
     mid_o = torch.empty((B, H, Sq, num_splits, D), device=q.device, dtype=torch.float32)
     mid_lse = torch.empty((B, H, Sq, num_splits), device=q.device, dtype=torch.float32)
     grid = (num_splits, triton.cdiv(Sq * (H // Hkv), block_m) * Hkv, B)
+    # Fused in-kernel combine only when it is one cheap round trip for the last
+    # CTA (few splits) and the grid is small enough that its extra registers
+    # cannot cost residency.
+    fuse = num_splits <= _FUSE_MAX_SPLITS and num_splits * grid[1] * B <= 2 * sm_count
+    n_cnt = grid[1] * B
+    ckey = (q.device.index, n_cnt)
+    if fuse and ckey not in _COUNTERS:
+        _COUNTERS[ckey] = torch.zeros(n_cnt, device=q.device, dtype=torch.int32)
+    cnt = _COUNTERS[ckey] if fuse else mid_lse
     _attn_fwd_split[grid](
-        q, k, v, mid_o, mid_lse,
+        q, k, v, mid_o, mid_lse, o, cnt,
         q.stride(0), q.stride(1), q.stride(2),
         k.stride(0), k.stride(1), k.stride(2),
         v.stride(0), v.stride(1), v.stride(2),
+        o.stride(0), o.stride(1), o.stride(2),
         H, Sq, Skv, H // Hkv, num_splits, chunk, 1.0 / math.sqrt(D),
         HEAD_DIM=D, BLOCK_M=block_m, BLOCK_N=block_n,
+        FUSE=fuse, BLOCK_S=max(2, triton.next_power_of_2(num_splits)), CR=4,
         # num_stages=1: plain ld.global keeps the L2 evict_first policy (the
         # cp.async path of the pipeliner drops it).
         num_warps=4, num_stages=1,
     )
+    if fuse:
+        return o
     _attn_combine[(Sq, H, B)](
         mid_o, mid_lse, o,
         o.stride(0), o.stride(1), o.stride(2),
