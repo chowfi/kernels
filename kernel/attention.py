@@ -246,6 +246,10 @@ def _attn_combine(
 
 _SM_COUNT = {}
 
+# Sequence length from which prefill uses the wide 128x128 tile without autotuning
+# (diagonal waste and pipeline prologue are small relative to per-tile overheads).
+_WIDE_TILE_MIN_SEQ = 8192
+
 
 def _sm_count(device: torch.device) -> int:
     idx = device.index if device.index is not None else torch.cuda.current_device()
@@ -323,6 +327,21 @@ def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool) -
             HEAD_DIM=D, BLOCK_R=conv_r,
             num_warps=4,
         )
+        if min(Sq, Skv) >= _WIDE_TILE_MIN_SEQ:
+            # Long prefill: the 128x128 w8 s2 tile is consistently the fastest here,
+            # but the one-shot autotuner picks it only about half the time (timing noise
+            # vs 128x64), so choose it deterministically.
+            _attn_fwd[(H, triton.cdiv(Sq, 128), B)](
+                q, k16, v16, o,
+                q.stride(0), q.stride(1), q.stride(2),
+                k16.stride(0), k16.stride(1), k16.stride(2),
+                v16.stride(0), v16.stride(1), v16.stride(2),
+                o.stride(0), o.stride(1), o.stride(2),
+                H, Sq, Skv, H // Hkv, 1.0 / math.sqrt(D),
+                HEAD_DIM=D, BLOCK_M=128, BLOCK_N=128, CAUSAL=causal,
+                num_warps=8, num_stages=2,
+            )
+            return o
         grid = lambda meta: (H, triton.cdiv(Sq, meta["BLOCK_M"]), B)  # noqa: E731
         _attn_fwd_tuned[grid](
             q, k16, v16, o,
