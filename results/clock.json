@@ -25,10 +25,15 @@
       "start": 1794114132.6942136,
       "end": 1794127860.0005624,
       "reason": "usage_limit"
+    },
+    {
+      "start": 1794132105.839602,
+      "end": 1794145860.0002084,
+      "reason": "usage_limit"
     }
   ],
-  "paused_seconds": 48517.42993879318,
-  "paused_since": 1794132105.839602,
-  "paused_reason": "usage_limit",
-  "last_heartbeat": 1794132105.839602
+  "paused_seconds": 62271.59054517746,
+  "paused_since": null,
+  "paused_reason": null,
+  "last_heartbeat": 1794145877.5347602
 }
