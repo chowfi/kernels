@@ -1,4 +1,4 @@
-# An AI agent made a GPU kernel faster than FlashAttention-2
+# Autoresearch made a custom GPU kernel for consumer hardware faster than Flash Attention 2 
 
 I built a loop in which an AI agent improves a GPU kernel by itself. The agent is Claude Code (Opus 5.5). The
 kernel is the attention step of a Llama-3-8B-size model: grouped-query attention (GQA), forward pass only. It runs
