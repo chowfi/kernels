@@ -32,13 +32,23 @@ def ratios(final: dict) -> list[tuple]:
     return out
 
 
-def render_table(final: dict) -> str:
-    lines = ["| Workload | seq_kv | ours (ms) | FA2 (ms) | SDPA (ms) | vs FA2 | vs SDPA |",
-             "|---|---:|---:|---:|---:|---:|---:|"]
+def render_table(final: dict, seed_ms: dict | None = None) -> str:
+    """seed_ms: the untuned seed kernel's ms per shape (results.tsv exp 0); adds a 'seed vs FA2' column."""
+    seed = "| seed vs FA2 " if seed_ms else ""
+    lines = [f"| Workload | seq_kv | ours (ms) | FA2 (ms) | SDPA (ms) {seed}| vs FA2 | vs SDPA |",
+             "|---|---:|---:|---:|---:|" + ("---:|" if seed_ms else "") + "---:|---:|"]
     for s, o, f, d, rf, rd in ratios(final):
-        lines.append(f"| {s.workload.capitalize()} | {s.seq_kv} | {o:.3f} | {f:.3f} | {d:.3f} | "
+        sc = f"| {f / seed_ms[s.name]:.2f}× " if seed_ms and seed_ms.get(s.name) else ("| n/a " if seed_ms else "")
+        lines.append(f"| {s.workload.capitalize()} | {s.seq_kv} | {o:.3f} | {f:.3f} | {d:.3f} {sc}| "
                      f"{_ratio(rf)} | {_ratio(rd)} |")
     return "\n".join(lines)
+
+
+def seed_times(rows: list[dict]) -> dict | None:
+    seed = next((r for r in rows if r["status"] == "baseline"), None)
+    if not seed:
+        return None
+    return {k[3:]: float(v) for k, v in seed.items() if k.startswith("ms_") and v}
 
 
 def headline(final: dict) -> str:
@@ -47,7 +57,8 @@ def headline(final: dict) -> str:
     geo = math.exp(sum(math.log(x) for x in fa) / len(fa))
     return (f"**Ours vs FA2: {min(fa):.2f}×–{max(fa):.2f}× (geomean {geo:.2f}×); "
             f"vs PyTorch SDPA: {min(sd):.2f}×–{max(sd):.2f}×** across the 11 table shapes "
-            f"(>1 means ours is faster).")
+            f"(>1 means ours is faster). The seed column is the untuned starting kernel (exp 0) "
+            f"against the same FA2 times.")
 
 
 def sdpa_note(final: dict) -> str:
@@ -188,11 +199,12 @@ def main() -> int:
     if not final.get("correct"):
         print(f"REFUSING to publish: kernel is not correct ({final.get('error', 'correctness failed')})", file=sys.stderr)
         return 1
-    counts = count_experiments(read_results(a.results_tsv))
+    rows = read_results(a.results_tsv)
+    counts = count_experiments(rows)
     active, wall, paused = read_clock(a.clock_json)
     stop = json.loads(a.run_state.read_text()).get("stop_reason") if a.run_state.exists() else None
     build = json.loads(a.token_report.read_text())["build"] if a.token_report.exists() else None
-    block = "\n\n".join([headline(final), render_table(final), sdpa_note(final),
+    block = "\n\n".join([headline(final), render_table(final, seed_times(rows)), sdpa_note(final),
                          render_accounting(counts, TokenLedger(a.tokens_json).totals(), build, active, wall, paused, stop)])
     update_readme(a.readme, block)
     print(f"updated {a.readme}")

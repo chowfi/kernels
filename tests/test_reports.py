@@ -171,3 +171,11 @@ def test_goal_row_is_first_kept_with_all_rows_at_fa2():
              "active_s": "40", "wall_s": "41", "hypothesis": "y", "output_tokens": "5"}]
     c = count_experiments(rows)
     assert (c["goal_exp"], c["goal_active_s"], c["goal_wall_s"]) == ("3", 30.0, 31.0)
+
+
+def test_render_table_seed_column():
+    final = sample_final_json()
+    seed = {k: 2 * v for k, v in final["fa2_ms"].items()}
+    md = render_table(final, seed)
+    assert "| seed vs FA2 |" in md and "0.50×" in md
+    assert md.splitlines()[1].count("---:") == 7

@@ -64,21 +64,21 @@ under-counted across restarts.
 ## Results
 
 <!-- RESULTS:START -->
-**Ours vs FA2: 1.04×–1.49× (geomean 1.17×); vs PyTorch SDPA: 1.05×–1.49×** across the 11 table shapes (>1 means ours is faster).
+**Ours vs FA2: 1.04×–1.49× (geomean 1.17×); vs PyTorch SDPA: 1.05×–1.49×** across the 11 table shapes (>1 means ours is faster). The seed column is the untuned starting kernel (exp 0) against the same FA2 times.
 
-| Workload | seq_kv | ours (ms) | FA2 (ms) | SDPA (ms) | vs FA2 | vs SDPA |
-|---|---:|---:|---:|---:|---:|---:|
-| Prefill | 2048 | 0.194 | 0.244 | 0.249 | **1.26×** | **1.28×** |
-| Prefill | 4096 | 0.651 | 0.788 | 0.805 | **1.21×** | **1.24×** |
-| Prefill | 8192 | 2.495 | 2.794 | 2.840 | **1.12×** | **1.14×** |
-| Prefill | 16384 | 9.787 | 10.479 | 10.647 | **1.07×** | **1.09×** |
-| Prefill | 32768 | 38.816 | 40.549 | 41.199 | **1.04×** | **1.06×** |
-| Decode | 2048 | 0.013 | 0.019 | 0.019 | **1.49×** | **1.49×** |
-| Decode | 4096 | 0.018 | 0.027 | 0.027 | **1.48×** | **1.48×** |
-| Decode | 8192 | 0.031 | 0.037 | 0.037 | **1.20×** | **1.20×** |
-| Decode | 16384 | 0.054 | 0.058 | 0.059 | **1.08×** | **1.10×** |
-| Decode | 32768 | 0.096 | 0.100 | 0.100 | **1.05×** | **1.05×** |
-| Decode | 65536 | 0.176 | 0.183 | 0.187 | **1.04×** | **1.06×** |
+| Workload | seq_kv | ours (ms) | FA2 (ms) | SDPA (ms) | seed vs FA2 | vs FA2 | vs SDPA |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Prefill | 2048 | 0.194 | 0.244 | 0.249 | 0.44× | **1.26×** | **1.28×** |
+| Prefill | 4096 | 0.651 | 0.788 | 0.805 | 0.40× | **1.21×** | **1.24×** |
+| Prefill | 8192 | 2.495 | 2.794 | 2.840 | 0.37× | **1.12×** | **1.14×** |
+| Prefill | 16384 | 9.787 | 10.479 | 10.647 | 0.36× | **1.07×** | **1.09×** |
+| Prefill | 32768 | 38.816 | 40.549 | 41.199 | 0.35× | **1.04×** | **1.06×** |
+| Decode | 2048 | 0.013 | 0.019 | 0.019 | 0.35× | **1.49×** | **1.49×** |
+| Decode | 4096 | 0.018 | 0.027 | 0.027 | 0.28× | **1.48×** | **1.48×** |
+| Decode | 8192 | 0.031 | 0.037 | 0.037 | 0.21× | **1.20×** | **1.20×** |
+| Decode | 16384 | 0.054 | 0.058 | 0.059 | 0.16× | **1.08×** | **1.10×** |
+| Decode | 32768 | 0.096 | 0.100 | 0.100 | 0.14× | **1.05×** | **1.05×** |
+| Decode | 65536 | 0.176 | 0.183 | 0.187 | 0.13× | **1.04×** | **1.06×** |
 
 SDPA backend: on this card SDPA's default dispatch runs the `flash` backend (PyTorch built-in flash kernel), recorded per shape in `results/final.json`. SDPA is called with `enable_gqa=True`.
 
