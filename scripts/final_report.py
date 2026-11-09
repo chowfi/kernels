@@ -177,7 +177,7 @@ def main() -> int:
     ap.add_argument("--from-json", type=Path)
     ap.add_argument("--final-json", type=Path, default=Path("results/final.json"))
     ap.add_argument("--bench-cmd", help="override the bench command (tests); --out PATH is appended")
-    ap.add_argument("--readme", type=Path, default=Path("README.md"))
+    ap.add_argument("--readme", type=Path, default=Path("docs/details.md"))
     ap.add_argument("--results-tsv", type=Path, default=Path("results.tsv"))
     ap.add_argument("--tokens-json", type=Path, default=Path("results/tokens.json"))
     ap.add_argument("--clock-json", type=Path, default=Path("results/clock.json"))
