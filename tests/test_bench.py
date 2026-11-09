@@ -26,7 +26,10 @@ def test_bench_ours_and_baselines(tmp_path):
     assert all(v > 0 for v in o["ours_ms"].values())
     assert "utc" in o and o["trials"] == 2
     assert set(o["post_timing_checks"]) == {s.name for s in BENCH_SHAPES}
-    assert o["triton_kernels"] == ["_attn_fwd"] and o["fresh_seed"] > 0
+    # every launched kernel is one of the Triton kernels defined in kernel/attention.py
+    src = (Path(__file__).parent.parent / "kernel" / "attention.py").read_text()
+    assert o["triton_kernels"] and all(f"def {n}(" in src for n in o["triton_kernels"])
+    assert o["fresh_seed"] > 0
 
 
 def test_check_logs_import_failure(tmp_path):

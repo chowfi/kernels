@@ -1,0 +1,361 @@
+{
+  "utc": "2026-11-09T19:19:58+00:00",
+  "trials": 5,
+  "correct": true,
+  "correctness": [
+    {
+      "shape_name": "prefill_2048",
+      "ok": true,
+      "max_abs_err": 0.007872581481933594,
+      "tol": 0.024548394775390624,
+      "error": null,
+      "max_row_rel": 0.0030209992546588182,
+      "rel_tol": 0.00918130373954773
+    },
+    {
+      "shape_name": "prefill_4096",
+      "ok": true,
+      "max_abs_err": 0.007828950881958008,
+      "tol": 0.0229118896484375,
+      "error": null,
+      "max_row_rel": 0.003085698699578643,
+      "rel_tol": 0.009470981381833554
+    },
+    {
+      "shape_name": "prefill_8192",
+      "ok": true,
+      "max_abs_err": 0.009938478469848633,
+      "tol": 0.02283273468017578,
+      "error": null,
+      "max_row_rel": 0.003150924574583769,
+      "rel_tol": 0.008964772172272206
+    },
+    {
+      "shape_name": "prefill_16384",
+      "ok": true,
+      "max_abs_err": 0.007766246795654297,
+      "tol": 0.025651795959472656,
+      "error": null,
+      "max_row_rel": 0.0032040912192314863,
+      "rel_tol": 0.009132336661219598
+    },
+    {
+      "shape_name": "prefill_32768",
+      "ok": true,
+      "max_abs_err": 0.00797581672668457,
+      "tol": 0.023507936096191406,
+      "error": null,
+      "max_row_rel": 0.0032002900261431932,
+      "rel_tol": 0.009962820284068585
+    },
+    {
+      "shape_name": "decode_2048",
+      "ok": true,
+      "max_abs_err": 0.00036513805389404297,
+      "tol": 0.0007678551435470582,
+      "error": null,
+      "max_row_rel": 0.0024863495491445065,
+      "rel_tol": 0.006673141684383154
+    },
+    {
+      "shape_name": "decode_4096",
+      "ok": true,
+      "max_abs_err": 0.0002751350402832031,
+      "tol": 0.0007142556667327881,
+      "error": null,
+      "max_row_rel": 0.0024738197680562735,
+      "rel_tol": 0.006501804407685995
+    },
+    {
+      "shape_name": "decode_8192",
+      "ok": true,
+      "max_abs_err": 0.00018858164548873901,
+      "tol": 0.000477163290977478,
+      "error": null,
+      "max_row_rel": 0.0025499758776277304,
+      "rel_tol": 0.006461950786411762
+    },
+    {
+      "shape_name": "decode_16384",
+      "ok": true,
+      "max_abs_err": 0.00012958422303199768,
+      "tol": 0.0003976506948471069,
+      "error": null,
+      "max_row_rel": 0.0026559748221188784,
+      "rel_tol": 0.006363688338547945
+    },
+    {
+      "shape_name": "decode_32768",
+      "ok": true,
+      "max_abs_err": 0.00014767050743103027,
+      "tol": 0.00029294023513793944,
+      "error": null,
+      "max_row_rel": 0.0027857862878590822,
+      "rel_tol": 0.0064984185844659806
+    },
+    {
+      "shape_name": "decode_65536",
+      "ok": true,
+      "max_abs_err": 7.637590169906616e-05,
+      "tol": 0.00023555586338043212,
+      "error": null,
+      "max_row_rel": 0.00247360416688025,
+      "rel_tol": 0.006246134474873543
+    },
+    {
+      "shape_name": "heldout_prefill_3000",
+      "ok": true,
+      "max_abs_err": 0.00818634033203125,
+      "tol": 0.02453408966064453,
+      "error": null,
+      "max_row_rel": 0.003019868629053235,
+      "rel_tol": 0.009359422907233239
+    },
+    {
+      "shape_name": "heldout_decode_5001",
+      "ok": true,
+      "max_abs_err": 0.00024369359016418457,
+      "tol": 0.0006992650985717774,
+      "error": null,
+      "max_row_rel": 0.0024597670417279005,
+      "rel_tol": 0.006424582399427891
+    },
+    {
+      "shape_name": "heldout_prefill_4096_g8",
+      "ok": true,
+      "max_abs_err": 0.007655620574951172,
+      "tol": 0.021916253662109374,
+      "error": null,
+      "max_row_rel": 0.0032367289531975985,
+      "rel_tol": 0.00847622037306428
+    },
+    {
+      "shape_name": "heldout_decode_8192_g1",
+      "ok": true,
+      "max_abs_err": 0.00023888051509857178,
+      "tol": 0.0005988014698028565,
+      "error": null,
+      "max_row_rel": 0.002592002507299185,
+      "rel_tol": 0.006644016899168491
+    }
+  ],
+  "ours_ms": {
+    "prefill_2048": 0.19417600333690643,
+    "prefill_4096": 0.6512640118598938,
+    "prefill_8192": 2.495487928390503,
+    "prefill_16384": 9.787391662597656,
+    "prefill_32768": 38.81625747680664,
+    "decode_2048": 0.012543999589979649,
+    "decode_4096": 0.01817600056529045,
+    "decode_8192": 0.031007999554276466,
+    "decode_16384": 0.05353600159287453,
+    "decode_32768": 0.09571199864149094,
+    "decode_65536": 0.17555199563503265
+  },
+  "ours_stdev_ms": {
+    "prefill_2048": 0.0010632478780474228,
+    "prefill_4096": 0.0009159004176484677,
+    "prefill_8192": 0.0009159004176484677,
+    "prefill_16384": 0.023151705930439703,
+    "prefill_32768": 0.004057046129080305,
+    "decode_2048": 7.155388712855222e-05,
+    "decode_4096": 1.7527255300318365e-05,
+    "decode_8192": 0.0,
+    "decode_16384": 0.0,
+    "decode_32768": 0.0006115280348105196,
+    "decode_65536": 9.863137515415867e-05
+  },
+  "fresh_seed": 1822497818,
+  "post_timing_checks": {
+    "prefill_2048": {
+      "kernels": [
+        "_attn_fwd"
+      ],
+      "triton_kernels": [
+        "_attn_fwd"
+      ],
+      "max_abs_err": 0.008605241775512695,
+      "max_row_rel": 0.0030709144193679094
+    },
+    "prefill_4096": {
+      "kernels": [
+        "_attn_fwd"
+      ],
+      "triton_kernels": [
+        "_attn_fwd"
+      ],
+      "max_abs_err": 0.007920265197753906,
+      "max_row_rel": 0.003130359807983041
+    },
+    "prefill_8192": {
+      "kernels": [
+        "_attn_fwd"
+      ],
+      "triton_kernels": [
+        "_attn_fwd"
+      ],
+      "max_abs_err": 0.008554697036743164,
+      "max_row_rel": 0.0031506712548434734
+    },
+    "prefill_16384": {
+      "kernels": [
+        "_attn_fwd"
+      ],
+      "triton_kernels": [
+        "_attn_fwd"
+      ],
+      "max_abs_err": 0.007709026336669922,
+      "max_row_rel": 0.0033424091525375843
+    },
+    "prefill_32768": {
+      "kernels": [
+        "_attn_fwd"
+      ],
+      "triton_kernels": [
+        "_attn_fwd"
+      ],
+      "max_abs_err": 0.007969379425048828,
+      "max_row_rel": 0.003229073714464903
+    },
+    "decode_2048": {
+      "kernels": [
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.00048382580280303955,
+      "max_row_rel": 0.0025150764267891645
+    },
+    "decode_4096": {
+      "kernels": [
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.00028711557388305664,
+      "max_row_rel": 0.0025652472395449877
+    },
+    "decode_8192": {
+      "kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.0002492964267730713,
+      "max_row_rel": 0.0025319878477603197
+    },
+    "decode_16384": {
+      "kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.00014279037714004517,
+      "max_row_rel": 0.002454029629006982
+    },
+    "decode_32768": {
+      "kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 8.242577314376831e-05,
+      "max_row_rel": 0.002505895448848605
+    },
+    "decode_65536": {
+      "kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 7.091276347637177e-05,
+      "max_row_rel": 0.0024591670371592045
+    }
+  },
+  "triton_kernels": [
+    "_attn_combine",
+    "_attn_fwd",
+    "_attn_fwd_split"
+  ],
+  "fa2_ms": {
+    "prefill_2048": 0.24400000274181366,
+    "prefill_4096": 0.7884799838066101,
+    "prefill_8192": 2.793760061264038,
+    "prefill_16384": 10.478591918945312,
+    "prefill_32768": 40.54886245727539,
+    "decode_2048": 0.018688000738620758,
+    "decode_4096": 0.02691200003027916,
+    "decode_8192": 0.037151999771595,
+    "decode_16384": 0.057631999254226685,
+    "decode_32768": 0.1000640019774437,
+    "decode_65536": 0.182559996843338
+  },
+  "fa2_stdev_ms": {
+    "prefill_2048": 0.0002894200666286696,
+    "prefill_4096": 0.002975878152118641,
+    "prefill_8192": 0.0011403057464679821,
+    "prefill_16384": 0.004714844555128683,
+    "prefill_32768": 0.007676943357242211,
+    "decode_2048": 0.0,
+    "decode_4096": 0.0,
+    "decode_8192": 0.0,
+    "decode_16384": 0.0,
+    "decode_32768": 0.0,
+    "decode_65536": 0.00019726275013947302
+  },
+  "sdpa_ms": {
+    "prefill_2048": 0.24883200228214264,
+    "prefill_4096": 0.8051519989967346,
+    "prefill_8192": 2.8398399353027344,
+    "prefill_16384": 10.646528244018555,
+    "prefill_32768": 41.19859313964844,
+    "decode_2048": 0.018688000738620758,
+    "decode_4096": 0.02687999978661537,
+    "decode_8192": 0.037151999771595,
+    "decode_16384": 0.05910399928689003,
+    "decode_32768": 0.10009600222110748,
+    "decode_65536": 0.18665599822998047
+  },
+  "sdpa_stdev_ms": {
+    "prefill_2048": 0.00045794354482235925,
+    "prefill_4096": 0.003334192370498724,
+    "prefill_8192": 0.0008683128385402672,
+    "prefill_16384": 0.0011214831647525707,
+    "prefill_32768": 0.0023353063676814895,
+    "decode_2048": 1.431011102552298e-05,
+    "decode_4096": 1.7527255300318365e-05,
+    "decode_8192": 0.0,
+    "decode_16384": 0.0,
+    "decode_32768": 0.0001226874835569023,
+    "decode_65536": 0.0
+  },
+  "sdpa_backend": {
+    "prefill_2048": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "prefill_4096": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "prefill_8192": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "prefill_16384": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "prefill_32768": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "decode_2048": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_4096": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_8192": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_16384": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_32768": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_65536": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)"
+  },
+  "fa2_source": "flash-attn==2.8.3.post2 (source build, sm_120 only, CUDA 12.8)",
+  "sdpa_backend_note": "relabelled after the timed run (labels only; timings untouched): the in-bench labels were spurious 'math (kernel: none)' from a profiler-session quirk, fixed in harness/baselines.py"
+}

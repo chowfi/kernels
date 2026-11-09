@@ -1,0 +1,35 @@
+{
+  "loop": {
+    "input_tokens": 1268,
+    "output_tokens": 1911377,
+    "cache_read_tokens": 49109082,
+    "cache_write_tokens": 5004989,
+    "messages": 639,
+    "sessions": 57,
+    "first_ts": "2026-11-07T14:45:05.778Z",
+    "last_ts": "2026-11-08T14:14:02.957Z",
+    "total_tokens": 56026716
+  },
+  "build": {
+    "input_tokens": 1646,
+    "output_tokens": 683292,
+    "cache_read_tokens": 77599929,
+    "cache_write_tokens": 3076132,
+    "messages": 729,
+    "sessions": 7,
+    "first_ts": "2026-11-06T22:48:07.947Z",
+    "last_ts": "2026-11-09T19:21:30.742Z",
+    "total_tokens": 81360999
+  },
+  "project": {
+    "input_tokens": 2914,
+    "output_tokens": 2594669,
+    "cache_read_tokens": 126709011,
+    "cache_write_tokens": 8081121,
+    "messages": 1368,
+    "sessions": 64,
+    "first_ts": "2026-11-06T22:48:07.947Z",
+    "last_ts": "2026-11-09T19:21:30.742Z",
+    "total_tokens": 137387715
+  }
+}

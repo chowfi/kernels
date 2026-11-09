@@ -20,6 +20,6 @@
   "next_exp_id": 53,
   "pause_reason": null,
   "pause_until": null,
-  "stop_reason": null,
+  "stop_reason": "active_hours",
   "threshold": 0.005
 }

@@ -38,10 +38,16 @@ def sdpa_backend_name(shape: Shape) -> str:
     q, k, v = (to_sdpa_layout(t) for t in make_inputs(shape))
     sdpa_attention(q, k, v, shape.causal)  # warm up (cudnn plan build, autotune)
     torch.cuda.synchronize()
-    with profile(activities=[ProfilerActivity.CUDA]) as prof:
-        sdpa_attention(q, k, v, shape.causal)
-        torch.cuda.synchronize()
-    kernels = [e for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA]
+    # Right after another profiler session (bench.py's Triton-only check), the first sessions can
+    # capture no CUDA activity at all; retry so the label is not a spurious "math (kernel: none)".
+    kernels = []
+    for _ in range(5):
+        with profile(activities=[ProfilerActivity.CUDA]) as prof:
+            sdpa_attention(q, k, v, shape.causal)
+            torch.cuda.synchronize()
+        kernels = [e for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA]
+        if kernels:
+            break
     for e in sorted(kernels, key=lambda e: -e.device_time_total):
         b = _classify(e.name)
         if b:

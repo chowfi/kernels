@@ -42,6 +42,10 @@ def _git(root, *a):
     return subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, text=True).stdout
 
 
+SEED_FIX = REPO / "tests" / "fixtures" / "seed"
+RUN_ARTIFACTS = ["results.tsv", "runs.log", "results/run_state.json", "results/clock.json",
+                 "results/tokens.json"]
+
 @pytest.fixture
 def loop_env(tmp_path, monkeypatch):
     root = tmp_path / "repo"
@@ -52,6 +56,12 @@ def loop_env(tmp_path, monkeypatch):
         if src.is_file():
             (root / f).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, root / f)
+    # The repo now holds a finished run: start each fake loop from the pre-run seed instead.
+    for rel in RUN_ARTIFACTS:
+        (root / rel).unlink(missing_ok=True)
+    for src in SEED_FIX.rglob("*"):
+        if src.is_file():
+            shutil.copy2(src, root / src.relative_to(SEED_FIX))
     for k, v in {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                  "GIT_COMMITTER_EMAIL": "t@t"}.items():
         monkeypatch.setenv(k, v)
@@ -437,7 +447,7 @@ def test_changed_files_untracked_and_renames(loop_env):
     assert {"newdir/x.py", "README.md", "README2.md"} <= changed_files(root)
 
 
-SEED_KERNEL = (REPO / "kernel" / "attention.py").read_text()
+SEED_KERNEL = (REPO / "tests" / "fixtures" / "seed" / "kernel" / "attention.py").read_text()
 
 
 @pytest.mark.parametrize("snippet", [

@@ -1,0 +1,118 @@
+{
+  "shape": "prefill causal seq 4096, 32q/8kv heads, d128, bf16",
+  "metric": "max |out - fp32 ref| / max |fp32 ref|",
+  "rows": [
+    {
+      "case": "normal",
+      "desc": "harness inputs: randn",
+      "ours_fp16acc": {
+        "rel_err": 0.002316646510735154,
+        "nonfinite": 0
+      },
+      "ours_fp32acc": {
+        "rel_err": 0.0022303189616650343,
+        "nonfinite": 0
+      },
+      "fa2": {
+        "rel_err": 0.0022303189616650343,
+        "nonfinite": 0
+      }
+    },
+    {
+      "case": "qk_x8",
+      "desc": "q and k x8",
+      "ours_fp16acc": {
+        "rel_err": 0.12326585501432419,
+        "nonfinite": 0
+      },
+      "ours_fp32acc": {
+        "rel_err": 0.002998076379299164,
+        "nonfinite": 0
+      },
+      "fa2": {
+        "rel_err": 0.002998076379299164,
+        "nonfinite": 0
+      }
+    },
+    {
+      "case": "qk_x16",
+      "desc": "q and k x16",
+      "ours_fp16acc": {
+        "rel_err": 0.3918341100215912,
+        "nonfinite": 0
+      },
+      "ours_fp32acc": {
+        "rel_err": 0.002994951093569398,
+        "nonfinite": 0
+      },
+      "fa2": {
+        "rel_err": 0.002994951093569398,
+        "nonfinite": 0
+      }
+    },
+    {
+      "case": "v_x100",
+      "desc": "v x100",
+      "ours_fp16acc": {
+        "rel_err": 0.0025107921101152897,
+        "nonfinite": 0
+      },
+      "ours_fp32acc": {
+        "rel_err": 0.0025107921101152897,
+        "nonfinite": 0
+      },
+      "fa2": {
+        "rel_err": 0.0025107921101152897,
+        "nonfinite": 0
+      }
+    },
+    {
+      "case": "v_x1000",
+      "desc": "v x1000",
+      "ours_fp16acc": {
+        "rel_err": 0.002523168921470642,
+        "nonfinite": 0
+      },
+      "ours_fp32acc": {
+        "rel_err": 0.0022609245497733355,
+        "nonfinite": 0
+      },
+      "fa2": {
+        "rel_err": 0.0022609245497733355,
+        "nonfinite": 0
+      }
+    },
+    {
+      "case": "k_outlier_x100",
+      "desc": "one k channel x100 (LLM-style outlier)",
+      "ours_fp16acc": {
+        "rel_err": 0.04980626702308655,
+        "nonfinite": 0
+      },
+      "ours_fp32acc": {
+        "rel_err": 0.003621782176196575,
+        "nonfinite": 0
+      },
+      "fa2": {
+        "rel_err": 0.003628305858001113,
+        "nonfinite": 0
+      }
+    },
+    {
+      "case": "k_outlier_x1000",
+      "desc": "one k channel x1000",
+      "ours_fp16acc": {
+        "rel_err": 0.22122722864151,
+        "nonfinite": 0
+      },
+      "ours_fp32acc": {
+        "rel_err": 0.0035736525896936655,
+        "nonfinite": 0
+      },
+      "fa2": {
+        "rel_err": 0.0035736525896936655,
+        "nonfinite": 0
+      }
+    }
+  ]
+}

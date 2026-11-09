@@ -1,0 +1,372 @@
+{
+  "utc": "2026-11-09T19:21:31+00:00",
+  "trials": 5,
+  "correct": true,
+  "correctness": [
+    {
+      "shape_name": "prefill_2048",
+      "ok": true,
+      "max_abs_err": 0.007908105850219727,
+      "tol": 0.024548394775390624,
+      "error": null,
+      "max_row_rel": 0.0039457641541957855,
+      "rel_tol": 0.00918130373954773
+    },
+    {
+      "shape_name": "prefill_4096",
+      "ok": true,
+      "max_abs_err": 0.008131980895996094,
+      "tol": 0.0229118896484375,
+      "error": null,
+      "max_row_rel": 0.004690879490226507,
+      "rel_tol": 0.009470981381833554
+    },
+    {
+      "shape_name": "prefill_8192",
+      "ok": true,
+      "max_abs_err": 0.008871078491210938,
+      "tol": 0.02283273468017578,
+      "error": null,
+      "max_row_rel": 0.005164328496903181,
+      "rel_tol": 0.008964772172272206
+    },
+    {
+      "shape_name": "prefill_16384",
+      "ok": true,
+      "max_abs_err": 0.01018214225769043,
+      "tol": 0.025651795959472656,
+      "error": null,
+      "max_row_rel": 0.005031985230743885,
+      "rel_tol": 0.009132336661219598
+    },
+    {
+      "shape_name": "prefill_32768",
+      "ok": true,
+      "max_abs_err": 0.008559465408325195,
+      "tol": 0.023507936096191406,
+      "error": null,
+      "max_row_rel": 0.006332832854241133,
+      "rel_tol": 0.009962820284068585
+    },
+    {
+      "shape_name": "decode_2048",
+      "ok": true,
+      "max_abs_err": 0.00036513805389404297,
+      "tol": 0.0007678551435470582,
+      "error": null,
+      "max_row_rel": 0.0024863495491445065,
+      "rel_tol": 0.006673141684383154
+    },
+    {
+      "shape_name": "decode_4096",
+      "ok": true,
+      "max_abs_err": 0.0002751350402832031,
+      "tol": 0.0007142556667327881,
+      "error": null,
+      "max_row_rel": 0.0024738197680562735,
+      "rel_tol": 0.006501804407685995
+    },
+    {
+      "shape_name": "decode_8192",
+      "ok": true,
+      "max_abs_err": 0.00018858164548873901,
+      "tol": 0.000477163290977478,
+      "error": null,
+      "max_row_rel": 0.0025499758776277304,
+      "rel_tol": 0.006461950786411762
+    },
+    {
+      "shape_name": "decode_16384",
+      "ok": true,
+      "max_abs_err": 0.00012958422303199768,
+      "tol": 0.0003976506948471069,
+      "error": null,
+      "max_row_rel": 0.0026559748221188784,
+      "rel_tol": 0.006363688338547945
+    },
+    {
+      "shape_name": "decode_32768",
+      "ok": true,
+      "max_abs_err": 0.00014767050743103027,
+      "tol": 0.00029294023513793944,
+      "error": null,
+      "max_row_rel": 0.0027857862878590822,
+      "rel_tol": 0.0064984185844659806
+    },
+    {
+      "shape_name": "decode_65536",
+      "ok": true,
+      "max_abs_err": 7.637590169906616e-05,
+      "tol": 0.00023555586338043212,
+      "error": null,
+      "max_row_rel": 0.00247360416688025,
+      "rel_tol": 0.006246134474873543
+    },
+    {
+      "shape_name": "heldout_prefill_3000",
+      "ok": true,
+      "max_abs_err": 0.008409738540649414,
+      "tol": 0.02453408966064453,
+      "error": null,
+      "max_row_rel": 0.004029436036944389,
+      "rel_tol": 0.009359422907233239
+    },
+    {
+      "shape_name": "heldout_decode_5001",
+      "ok": true,
+      "max_abs_err": 0.00024369359016418457,
+      "tol": 0.0006992650985717774,
+      "error": null,
+      "max_row_rel": 0.0024597670417279005,
+      "rel_tol": 0.006424582399427891
+    },
+    {
+      "shape_name": "heldout_prefill_4096_g8",
+      "ok": true,
+      "max_abs_err": 0.008037567138671875,
+      "tol": 0.021916253662109374,
+      "error": null,
+      "max_row_rel": 0.004950146656483412,
+      "rel_tol": 0.00847622037306428
+    },
+    {
+      "shape_name": "heldout_decode_8192_g1",
+      "ok": true,
+      "max_abs_err": 0.00023888051509857178,
+      "tol": 0.0005988014698028565,
+      "error": null,
+      "max_row_rel": 0.002592002507299185,
+      "rel_tol": 0.006644016899168491
+    }
+  ],
+  "ours_ms": {
+    "prefill_2048": 0.14159999787807465,
+    "prefill_4096": 0.4641599953174591,
+    "prefill_8192": 1.8214080333709717,
+    "prefill_16384": 7.374847888946533,
+    "prefill_32768": 29.515775680541992,
+    "decode_2048": 0.012543999589979649,
+    "decode_4096": 0.01817600056529045,
+    "decode_8192": 0.031007999554276466,
+    "decode_16384": 0.05350400134921074,
+    "decode_32768": 0.09566399827599525,
+    "decode_65536": 0.17587199807167053
+  },
+  "ours_stdev_ms": {
+    "prefill_2048": 0.00024328271643693692,
+    "prefill_4096": 0.005447446520129838,
+    "prefill_8192": 0.005622913156326925,
+    "prefill_16384": 0.006198413633032083,
+    "prefill_32768": 0.17766548959220585,
+    "decode_2048": 1.4310944025757307e-05,
+    "decode_4096": 0.0,
+    "decode_8192": 0.0,
+    "decode_16384": 0.0,
+    "decode_32768": 0.0005045202384119506,
+    "decode_65536": 7.155805212972386e-05
+  },
+  "fresh_seed": 1919048081,
+  "post_timing_checks": {
+    "prefill_2048": {
+      "kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "triton_kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "max_abs_err": 0.008416891098022461,
+      "max_row_rel": 0.0045326207764446735
+    },
+    "prefill_4096": {
+      "kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "triton_kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "max_abs_err": 0.008392095565795898,
+      "max_row_rel": 0.0046247378922998905
+    },
+    "prefill_8192": {
+      "kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "triton_kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "max_abs_err": 0.008030176162719727,
+      "max_row_rel": 0.004276033025234938
+    },
+    "prefill_16384": {
+      "kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "triton_kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "max_abs_err": 0.008128166198730469,
+      "max_row_rel": 0.005756777245551348
+    },
+    "prefill_32768": {
+      "kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "triton_kernels": [
+        "_attn_fwd",
+        "_kv_to_fp16"
+      ],
+      "max_abs_err": 0.00884246826171875,
+      "max_row_rel": 0.00578136695548892
+    },
+    "decode_2048": {
+      "kernels": [
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.0005231797695159912,
+      "max_row_rel": 0.00248256279155612
+    },
+    "decode_4096": {
+      "kernels": [
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.00027948617935180664,
+      "max_row_rel": 0.0024618280585855246
+    },
+    "decode_8192": {
+      "kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.00018272921442985535,
+      "max_row_rel": 0.0024172915145754814
+    },
+    "decode_16384": {
+      "kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.0001574009656906128,
+      "max_row_rel": 0.00255202385596931
+    },
+    "decode_32768": {
+      "kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 0.0001185685396194458,
+      "max_row_rel": 0.002578876679763198
+    },
+    "decode_65536": {
+      "kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "triton_kernels": [
+        "_attn_combine",
+        "_attn_fwd_split"
+      ],
+      "max_abs_err": 7.352232933044434e-05,
+      "max_row_rel": 0.002610429422929883
+    }
+  },
+  "triton_kernels": [
+    "_attn_combine",
+    "_attn_fwd",
+    "_attn_fwd_split",
+    "_kv_to_fp16"
+  ],
+  "fa2_ms": {
+    "prefill_2048": 0.2460480034351349,
+    "prefill_4096": 0.792576014995575,
+    "prefill_8192": 2.7944960594177246,
+    "prefill_16384": 10.478591918945312,
+    "prefill_32768": 40.76902389526367,
+    "decode_2048": 0.018688000738620758,
+    "decode_4096": 0.02691200003027916,
+    "decode_8192": 0.037151999771595,
+    "decode_16384": 0.057631999254226685,
+    "decode_32768": 0.1000640019774437,
+    "decode_65536": 0.18300800025463104
+  },
+  "fa2_stdev_ms": {
+    "prefill_2048": 0.0004573877184051946,
+    "prefill_4096": 0.003273195013646777,
+    "prefill_8192": 0.0015982353096844733,
+    "prefill_16384": 0.0026705050720881914,
+    "prefill_32768": 0.0038989611885622433,
+    "decode_2048": 1.431011102552298e-05,
+    "decode_4096": 0.0,
+    "decode_8192": 0.0,
+    "decode_16384": 5.724377610302923e-05,
+    "decode_32768": 0.0,
+    "decode_65536": 0.000525816298734662
+  },
+  "sdpa_ms": {
+    "prefill_2048": 0.24985599517822266,
+    "prefill_4096": 0.8061760067939758,
+    "prefill_8192": 2.854912042617798,
+    "prefill_16384": 10.703871726989746,
+    "prefill_32768": 41.417728424072266,
+    "decode_2048": 0.018688000738620758,
+    "decode_4096": 0.02691200003027916,
+    "decode_8192": 0.03718400001525879,
+    "decode_16384": 0.05910399928689003,
+    "decode_32768": 0.10009600222110748,
+    "decode_65536": 0.18665599822998047
+  },
+  "sdpa_stdev_ms": {
+    "prefill_2048": 0.0,
+    "prefill_4096": 0.0001714405735844235,
+    "prefill_8192": 0.005012864587261763,
+    "prefill_16384": 0.0023348879591035955,
+    "prefill_32768": 0.004283703462133593,
+    "decode_2048": 1.431011102552298e-05,
+    "decode_4096": 1.7527255300318365e-05,
+    "decode_8192": 5.354664942568324e-05,
+    "decode_16384": 5.724377610302923e-05,
+    "decode_32768": 0.00029100466903871845,
+    "decode_65536": 0.0
+  },
+  "sdpa_backend": {
+    "prefill_2048": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "prefill_4096": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "prefill_8192": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "prefill_16384": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "prefill_32768": "flash (kernel: void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits)",
+    "decode_2048": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_4096": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_8192": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_16384": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_32768": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)",
+    "decode_65536": "flash (kernel: void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kerne)"
+  },
+  "fa2_source": "flash-attn==2.8.3.post2 (source build, sm_120 only, CUDA 12.8)",
+  "sdpa_backend_note": "relabelled after the timed run (labels only; timings untouched): the in-bench labels were spurious 'math (kernel: none)' from a profiler-session quirk, fixed in harness/baselines.py"
+}
